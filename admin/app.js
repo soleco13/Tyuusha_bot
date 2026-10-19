@@ -469,16 +469,24 @@ async function doAction(order, action, btn) {
     if (!res) return;
     body = res;
   }
+  // Окно печати открываем сразу по клику (иначе браузер блокирует всплывающее окно), адрес — после ответа сервера
+  const printAction = ["print", "print_backs", "reprint"].includes(action) && state.summary?.print_mode === "browser";
+  const printWin = printAction ? window.open("about:blank", "_blank") : null;
   await withLoading(btn, PROGRESS[action], async () => {
     try {
       const r = await api(`/api/orders/${order.id}/actions/${action}`, { method: "POST", body });
       toast(r.message, "ok");
-      if (["print", "print_backs", "reprint"].includes(action) && state.summary?.print_mode === "browser") {
-        const w = window.open(`/print/${order.id}/${action === "print_backs" ? "back" : "front"}`, "_blank");
-        if (!w) toast("Браузер заблокировал окно печати — нажмите «Открыть окно печати» в карточке заказа", "warn");
+      if (printAction) {
+        const url = `/print/${order.id}/${action === "print_backs" ? "back" : "front"}`;
+        if (printWin) printWin.location = url;
+        else {
+          toast("Браузер заблокировал окно печати — откройте его кнопкой в карточке заказа", "warn");
+          location.hash = `order=${order.id}`;
+        }
       }
       if (state.openId === order.id) { state.detail = r.order; renderDrawer(false); }
     } catch (e) {
+      printWin?.close();
       toast(e.message, "error");
     }
   });
@@ -519,7 +527,7 @@ document.addEventListener("keydown", (e) => {
 function statusBanner(o) {
   if (o.status === "printing" && state.summary?.print_mode === "browser") {
     return `<div class="banner info"><div>Печать из браузера<div class="small">Откройте окно печати, напечатайте листы и нажмите «Напечатано».</div>
-      <div class="small" style="margin-top:6px"><a href="/print/${o.id}/${o.print_part || "front"}" target="_blank" rel="noopener"><b>Открыть окно печати</b></a></div></div></div>`;
+      <div style="margin-top:8px"><a class="btn primary sm" href="/print/${o.id}/${o.print_part || "front"}" target="_blank" rel="noopener">🖨 Открыть окно печати</a></div></div></div>`;
   }
   if (o.status === "printing") {
     const problem = (o.print_state || "").startsWith("⚠️");
