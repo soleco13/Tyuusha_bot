@@ -393,11 +393,12 @@ const ACTIONS = {
       ok: "Напечатать заново",
     }),
   },
+  printed_ok: { label: "✅ Напечатано", style: "primary" },
   cancel_job: {
     label: "⏹ Снять с принтера", style: "danger",
     confirm: (o) => ({
       title: "Снять задание с принтера?",
-      html: "<p>Задание удалится из очереди Windows, заказ вернётся в предыдущий статус. Уже напечатанные листы останутся.</p>",
+      html: "<p>Заказ вернётся в предыдущий статус. Уже напечатанные листы останутся.</p>",
       ok: "Снять задание", danger: true,
     }),
   },
@@ -455,7 +456,7 @@ function confirmModal(cfg) {
 
 const PROGRESS = {
   print: "Отправляем…", print_backs: "Отправляем…", reprint: "Отправляем…",
-  cancel_job: "Снимаем…", issue: "Сохраняем…", cancel: "Отменяем…",
+  cancel_job: "Снимаем…", printed_ok: "Сохраняем…", issue: "Сохраняем…", cancel: "Отменяем…",
 };
 
 async function doAction(order, action, btn) {
@@ -472,6 +473,10 @@ async function doAction(order, action, btn) {
     try {
       const r = await api(`/api/orders/${order.id}/actions/${action}`, { method: "POST", body });
       toast(r.message, "ok");
+      if (["print", "print_backs", "reprint"].includes(action) && state.summary?.print_mode === "browser") {
+        const w = window.open(`/print/${order.id}/${action === "print_backs" ? "back" : "front"}`, "_blank");
+        if (!w) toast("Браузер заблокировал окно печати — нажмите «Открыть окно печати» в карточке заказа", "warn");
+      }
       if (state.openId === order.id) { state.detail = r.order; renderDrawer(false); }
     } catch (e) {
       toast(e.message, "error");
@@ -512,6 +517,10 @@ document.addEventListener("keydown", (e) => {
 });
 
 function statusBanner(o) {
+  if (o.status === "printing" && state.summary?.print_mode === "browser") {
+    return `<div class="banner info"><div>Печать из браузера<div class="small">Откройте окно печати, напечатайте листы и нажмите «Напечатано».</div>
+      <div class="small" style="margin-top:6px"><a href="/print/${o.id}/${o.print_part || "front"}" target="_blank" rel="noopener"><b>Открыть окно печати</b></a></div></div></div>`;
+  }
   if (o.status === "printing") {
     const problem = (o.print_state || "").startsWith("⚠️");
     return `<div class="banner ${problem ? "error" : "info"}">${problem ? "" : '<span class="spinner"></span>'}
@@ -690,7 +699,7 @@ function renderPrinter() {
   if (!chip || !s) return;
   const p = s.printer;
   const problems = [...p.problems, ...p.jobs.filter((j) => j.problem).map((j) => j.states.join(", "))];
-  const label = s.print_mode === "file" ? "Режим: в файлы" :
+  const label = s.print_mode === "file" ? "Режим: в файлы" : s.print_mode === "browser" ? "Печать из браузера" :
     problems.length ? `Принтер: ${problems[0]}` : (p.jobs.length ? `Принтер: в очереди ${p.jobs.length}` : "Принтер готов");
   chip.innerHTML = `<span class="dot ${problems.length ? "bad" : (p.jobs.length ? "warn" : "ok")}"></span><span>${esc(label)}</span>`;
   pop.classList.toggle("hidden", !state.printerOpen);

@@ -51,21 +51,6 @@ CREATE TABLE IF NOT EXISTS events (
 );
 CREATE INDEX IF NOT EXISTS events_order ON events(order_id);
 CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
-CREATE TABLE IF NOT EXISTS print_jobs (    -- очередь для компьютера с принтером (PRINT_MODE=agent)
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    order_id INTEGER,
-    label TEXT NOT NULL,
-    color INTEGER NOT NULL,
-    quality TEXT NOT NULL,
-    pages TEXT NOT NULL,                -- JSON: пути к листам
-    state TEXT NOT NULL,                -- queued | taken | printing | done | error | cancelled
-    detail TEXT,
-    problem INTEGER NOT NULL DEFAULT 0,
-    win_job INTEGER,                    -- номер задания в очереди Windows
-    cancel INTEGER NOT NULL DEFAULT 0,
-    created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL
-);
 """)
 
 JSON_FIELDS = ("params", "pages", "previews", "sources", "print_job")
@@ -188,46 +173,3 @@ def set_setting(key: str, value: Any) -> None:
         _conn.execute("INSERT INTO settings (key, value) VALUES (?, ?) "
                       "ON CONFLICT(key) DO UPDATE SET value=excluded.value", (key, json.dumps(value)))
 
-
-# ---------- очередь печати для агента ----------
-
-def add_print_job(order_id: int | None, label: str, color: bool, quality: str, pages: list[str]) -> int:
-    with _lock:
-        cur = _conn.execute(
-            "INSERT INTO print_jobs (order_id, label, color, quality, pages, state, created_at, updated_at) "
-            "VALUES (?, ?, ?, ?, ?, 'queued', ?, ?)",
-            (order_id, label, int(color), quality, json.dumps(pages), now(), now()))
-        return cur.lastrowid
-
-
-def get_print_job(job_id: int) -> dict | None:
-    with _lock:
-        r = _conn.execute("SELECT * FROM print_jobs WHERE id=?", (job_id,)).fetchone()
-    if not r:
-        return None
-    d = dict(r)
-    d["pages"] = json.loads(d["pages"])
-    return d
-
-
-def update_print_job(job_id: int, **fields) -> None:
-    fields["updated_at"] = now()
-    sets = ", ".join(f"{k}=?" for k in fields)
-    with _lock:
-        _conn.execute(f"UPDATE print_jobs SET {sets} WHERE id=?", [*fields.values(), job_id])
-
-
-def take_print_job() -> dict | None:
-    """Отдаёт агенту самое старое задание из очереди (один раз)."""
-    with _lock:
-        r = _conn.execute("SELECT id FROM print_jobs WHERE state='queued' ORDER BY id LIMIT 1").fetchone()
-        if not r:
-            return None
-        update_print_job(r[0], state="taken", detail="Компьютер принял задание")
-        return get_print_job(r[0])
-
-
-def print_jobs_where(sql_where: str, args: tuple = ()) -> list[dict]:
-    with _lock:
-        rows = _conn.execute(f"SELECT id FROM print_jobs WHERE {sql_where}", args).fetchall()
-    return [get_print_job(r[0]) for r in rows]

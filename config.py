@@ -12,8 +12,7 @@ load_dotenv(BASE / ".env")
 BOT_TOKEN = os.getenv("BOT_TOKEN", "")
 ADMIN_IDS = {int(x) for x in os.getenv("ADMIN_IDS", "").replace(" ", "").split(",") if x}
 PRINTER_NAME = os.getenv("PRINTER_NAME") or None
-PRINT_MODE = os.getenv("PRINT_MODE", "printer")  # printer | file | agent
-AGENT_TOKEN = os.getenv("AGENT_TOKEN", "")  # ключ агента печати (компьютер с принтером)
+PRINT_MODE = os.getenv("PRINT_MODE", "printer")  # browser | printer (Windows) | file
 
 # Веб-админка
 ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "")

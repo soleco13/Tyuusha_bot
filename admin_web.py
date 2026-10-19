@@ -17,7 +17,6 @@ from PIL import Image
 import config
 import db
 import pricing
-import agentq
 import miniapi
 import printing
 import service
@@ -93,6 +92,7 @@ def _detail(o: dict) -> dict:
                      "full": f"/api/orders/{o['id']}/files/sources/{i}?size=full"} for i, _ in enumerate(o["sources"])],
         "events": db.events_for(o["id"]),
         "action_titles": service.ACTION_TITLES,
+        "print_part": (o.get("print_job") or {}).get("part", "front"),
     })
     return d
 
@@ -136,8 +136,8 @@ async def summary(request: web.Request) -> web.Response:
     counts = db.count_by_status()
     today = time.strftime("%Y-%m-%d")
     today_count, today_sum = db.stats_since(today)
-    if config.PRINT_MODE == "agent":
-        printer = agentq.printer_status()
+    if config.PRINT_MODE == "browser":
+        printer = {"name": "печать из браузера", "ok": True, "problems": [], "jobs": []}
     elif config.PRINT_MODE == "printer":
         printer = await asyncio.to_thread(printing.printer_status, config.PRINTER_NAME)
     else:
@@ -175,6 +175,9 @@ async def order_action(request: web.Request) -> web.Response:
         message = _print_message(o)
     elif action == "print_backs":
         message = _print_message(await service.start_print(oid, "back", "admin"))
+    elif action == "printed_ok":
+        await service.finish_browser_print(oid)
+        message = "Печать подтверждена"
     elif action == "cancel_job":
         await service.cancel_print_job(oid, "admin")
         message = "Задание снято с принтера"
@@ -224,10 +227,97 @@ async def order_file(request: web.Request) -> web.FileResponse:
     if not 0 <= idx < len(files) or not Path(files[idx]).exists():
         raise web.HTTPNotFound()
     src = Path(files[idx])
+    if request.query.get("size") == "print" and kind == "pages":  # оригинал листа для печати, без сжатия
+        return web.FileResponse(src, headers={"Cache-Control": "private, max-age=600"})
     size = 480 if request.query.get("size") == "thumb" else 1800
     cache = Path(order["dir"]) / "thumbs" / f"{kind}_{idx}_{size}.jpg"
     path = await asyncio.to_thread(_thumb, src, cache, size)
     return web.FileResponse(path, headers={"Cache-Control": "private, max-age=3600"})
+
+
+PRINT_PAGE = """<!doctype html>
+<html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Печать — {title}</title>
+<style>
+@page {{ size: A4; margin: 0; }}
+* {{ box-sizing: border-box; }}
+body {{ margin: 0; font: 15px/1.4 system-ui, sans-serif; background: #e9ecf2; color: #172033; }}
+.bar {{ position: sticky; top: 0; z-index: 5; background: #fff; border-bottom: 1px solid #d5dae5; padding: 12px 16px; display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }}
+.bar b {{ font-size: 16px; }} .bar .hint {{ flex: 1 1 100%; color: #5b6479; font-size: 13px; }}
+button {{ font: inherit; border: 0; border-radius: 10px; padding: 9px 16px; cursor: pointer; background: #e4ecfd; color: #1d4fc4; font-weight: 600; }}
+button.ok {{ background: #2563eb; color: #fff; }} button.no {{ background: #fde4e4; color: #b3261e; }}
+.sheet {{ width: 210mm; height: 297mm; margin: 14px auto; background: #fff; overflow: hidden; box-shadow: 0 2px 12px rgba(0,0,0,.18); }}
+.sheet img {{ display: block; width: 210mm; height: 297mm; {filter} }}
+#msg {{ font-size: 14px; }}
+@media print {{
+  .bar {{ display: none; }} body {{ background: #fff; }}
+  .sheet {{ margin: 0; box-shadow: none; page-break-after: always; break-after: page; }}
+  .sheet:last-child {{ page-break-after: auto; break-after: auto; }}
+}}
+</style></head><body>
+<div class="bar">
+  <b>{title}</b>
+  <button onclick="window.print()">🖨 Печатать</button>
+  {confirm_buttons}
+  <span id="msg"></span>
+  <div class="hint">В окне печати: принтер — Epson L3250, бумага A4, <b>масштаб 100%</b> (не «по размеру страницы»), поля — «нет», {color_hint}, качество — {quality}. Листов: {count}.</div>
+</div>
+{sheets}
+<script>
+const images = [...document.images];
+Promise.all(images.map((i) => i.complete ? 0 : new Promise((r) => {{ i.onload = i.onerror = r; }}))).then(() => setTimeout(() => window.print(), 300));
+async function act(a) {{
+  const r = await fetch("/api/orders/{oid}/actions/" + a, {{ method: "POST", headers: {{ "Content-Type": "application/json" }}, body: "{{}}" }});
+  const d = await r.json();
+  document.getElementById("msg").textContent = d.ok ? (a === "printed_ok" ? "Готово, заказ отмечен напечатанным. Окно можно закрыть." : "Печать отменена, заказ вернулся в прежний статус.") : (d.error || "Ошибка");
+  if (d.ok) setTimeout(() => window.close(), 1200);
+}}
+</script></body></html>"""
+
+
+async def print_page(request: web.Request) -> web.Response:
+    """Страница для печати из браузера: листы A4 в реальный размер, диалог печати открывается сам."""
+    if not _authorized(request):
+        raise web.HTTPFound("/")
+    if request.match_info["id"] == "test":
+        from PIL import ImageDraw
+        import cards
+        path = config.DATA / "testprint.png"
+        page = Image.new("RGB", cards.A4, "white")
+        d = ImageDraw.Draw(page)
+        x, y, side = cards.mm(80), cards.mm(40), cards.mm(50)
+        d.rectangle((x, y, x + side, y + side), outline="black", width=4)
+        d.text((cards.A4[0] // 2, cards.mm(25)), "Пробная печать", font=cards.rank_font(cards.mm(5)), fill="black", anchor="mm")
+        d.text((cards.A4[0] // 2, y + side + cards.mm(10)), "Сторона квадрата должна быть ровно 50 мм",
+               font=cards.rank_font(cards.mm(3.5)), fill="black", anchor="mm")
+        page.save(path, dpi=(cards.DPI, cards.DPI))
+        sheets = '<div class="sheet"><img src="/print/test/image"></div>'
+        html_text = PRINT_PAGE.format(title="Пробный лист", confirm_buttons="", color_hint="цвет любой", quality="обычное",
+                                      count=1, sheets=sheets, filter="", oid=0)
+        return web.Response(text=html_text, content_type="text/html", headers={"Cache-Control": "no-store"})
+    order = service.get(int(request.match_info["id"]))
+    part = request.match_info["part"]
+    pages = list(range(len(order["pages"])))
+    if order["kind"] == "cards":
+        half = len(pages) // 2
+        pages = pages[half:] if part == "back" else pages[:half]
+    p = order["params"]
+    color = p.get("color", True)
+    quality = service.QUALITY_TITLES.get(p.get("quality", "high"), "высокое").lower()
+    title = f"Заказ №{order['id']}" + (" · рубашки" if part == "back" else "")
+    confirm = ('<button class="ok" onclick="act(\'printed_ok\')">✅ Напечатано</button>'
+               '<button class="no" onclick="act(\'cancel_job\')">✖ Не получилось</button>') if order["status"] == "printing" else ""
+    sheets = "".join(f'<div class="sheet"><img src="/api/orders/{order["id"]}/files/pages/{i}?size=print"></div>' for i in pages)
+    html_text = PRINT_PAGE.format(title=title, confirm_buttons=confirm, count=len(pages), sheets=sheets, oid=order["id"],
+                                  color_hint="цветная печать" if color else "чёрно-белая печать", quality=quality,
+                                  filter="" if color else "filter: grayscale(1);")
+    return web.Response(text=html_text, content_type="text/html", headers={"Cache-Control": "no-store"})
+
+
+async def print_test_image(request: web.Request) -> web.StreamResponse:
+    if not _authorized(request):
+        raise web.HTTPForbidden()
+    return web.FileResponse(config.DATA / "testprint.png")
 
 
 async def order_zip(request: web.Request) -> web.Response:
@@ -257,8 +347,6 @@ async def prices_put(request: web.Request) -> web.Response:
 
 async def printer_cancel_job(request: web.Request) -> web.Response:
     job_id = int(request.match_info["job"])
-    if config.PRINT_MODE == "agent":
-        raise service.ServiceError("Задание на компьютере оператора удаляется кнопкой «Снять с принтера» в карточке заказа или в окне «Печать» самого компьютера")
     printer = config.PRINTER_NAME or printing.default_printer()
     try:
         await asyncio.to_thread(printing.cancel_job, printer, job_id)
@@ -284,7 +372,9 @@ def make_app() -> web.Application:
         web.get(r"/api/orders/{id:\d+}/download", order_zip),
         web.get("/api/prices", prices_get), web.put("/api/prices", prices_put),
         web.post(r"/api/printer/jobs/{job:\d+}/cancel", printer_cancel_job),
-        *miniapi.routes(), *agentq.routes(),
+        *miniapi.routes(),
+        web.get(r"/print/{id:\d+}/{part:front|back}", print_page), web.get("/print/{id:test}", print_page),
+        web.get("/print/test/image", print_test_image),
         web.get("/miniapp", miniapp_index), web.get("/miniapp/", miniapp_index),
         web.static("/miniapp", config.BASE / "miniapp"),
         web.static("/static", STATIC),

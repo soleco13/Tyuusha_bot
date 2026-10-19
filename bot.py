@@ -16,8 +16,6 @@ from aiogram.types import (BotCommand, BotCommandScopeChat, CallbackQuery, MenuB
                            WebAppInfo)
 
 import admin_web
-import agentq
-import cards
 import config
 import printing
 import service
@@ -73,49 +71,13 @@ async def admin_link(message: Message) -> None:
     await message.answer(f"🧑‍💼 Панель заказов: {config.ADMIN_URL}\nПароль — ADMIN_PASSWORD в файле .env")
 
 
-@dp.message(Command("printers"))
-async def list_printers(message: Message) -> None:
-    if message.from_user.id not in config.ADMIN_IDS:
-        return
-    if config.PRINT_MODE == "agent":
-        status = agentq.printer_status()
-        names = [status["name"]] if agentq.online() else []
-    else:
-        names = printing.list_printers()
-        status = await asyncio.to_thread(printing.printer_status, config.PRINTER_NAME)
-    await message.answer(
-        "Принтеры на компьютере:\n" + "\n".join(f"• {html.escape(n)}" for n in names)
-        + f"\n\nСейчас используется: {html.escape(status['name'] or '—')}\nРежим: {config.PRINT_MODE}\n"
-        + ("✅ Ошибок нет" if status["ok"] else "⚠️ " + html.escape("; ".join(status["problems"]) or "есть проблемные задания"))
-        + f"\nВ очереди: {len(status['jobs'])}")
-
-
 @dp.message(Command("testprint"))
 async def test_print(message: Message) -> None:
-    """Пробный лист: проверить связь с принтером и что масштаб 1:1 (квадрат ровно 50 мм)."""
+    """Пробный лист из браузера: проверить связь с принтером и что масштаб 1:1 (квадрат ровно 50 мм)."""
     if message.from_user.id not in config.ADMIN_IDS:
         return
-    from PIL import Image, ImageDraw
-    page = Image.new("RGB", cards.A4, "white")
-    d = ImageDraw.Draw(page)
-    x, y, side = cards.mm(80), cards.mm(40), cards.mm(50)
-    d.rectangle((x, y, x + side, y + side), outline="black", width=4)
-    d.text((cards.A4[0] // 2, cards.mm(25)), "Пробная печать", font=cards.rank_font(cards.mm(5)), fill="black", anchor="mm")
-    d.text((cards.A4[0] // 2, y + side + cards.mm(10)), "Сторона квадрата должна быть ровно 50 мм",
-           font=cards.rank_font(cards.mm(3.5)), fill="black", anchor="mm")
-    path = config.DATA / "testprint.png"
-    page.save(path, dpi=(cards.DPI, cards.DPI))
-    status = await message.answer("🖨 Отправляю пробный лист…")
-    try:
-        if config.PRINT_MODE == "agent":
-            result = agentq.submit(None, "Тюша: пробный лист", [path], True, "normal")
-        else:
-            result = await asyncio.to_thread(printing.print_pages, [path], printer=config.PRINTER_NAME,
-                                             job_name="Тюша: пробный лист", mode=config.PRINT_MODE, file_dir=config.PRINTED_DIR)
-        await status.edit_text(f"✅ Пробный лист {html.escape(result['message'])}. "
-                               "Если он не вышел за минуту — посмотрите состояние принтера: /printers")
-    except Exception as e:
-        await status.edit_text(f"⚠️ Ошибка печати: {html.escape(str(e))}")
+    await message.answer(f"🖨 Пробный лист: откройте {config.ADMIN_URL}/print/test в браузере на компьютере с принтером "
+                         "(сначала войдите в админку). Квадрат на листе должен быть ровно 50 мм.")
 
 
 @dp.callback_query(F.data.startswith("adm:"))
@@ -124,14 +86,19 @@ async def admin_action(cb: CallbackQuery) -> None:
         return await cb.answer("Нет доступа", show_alert=True)
     _, action, raw_id = cb.data.split(":")
     oid = int(raw_id)
-    await cb.answer("Отправляю на принтер…")
+    await cb.answer("Готовлю печать…")
     try:
         await service.start_print(oid, "back" if action == "backs" else "front", "admin")
     except service.ServiceError as e:
         await cb.message.answer(f"⚠️ Заказ №{oid}: {html.escape(str(e))}")
         return
-    await lock(cb, "Отправлено на принтер")
-    await cb.message.answer(f"🖨 Заказ №{oid} отправлен на принтер. Слежу за очередью — напишу, если что-то пойдёт не так.")
+    await lock(cb, "Печать запущена")
+    if config.PRINT_MODE == "browser":
+        part = "back" if action == "backs" else "front"
+        await cb.message.answer(f"🖨 Заказ №{oid}: откройте окно печати в админке — {config.ADMIN_URL}/print/{oid}/{part}\n"
+                                "Напечатайте листы и нажмите там «Напечатано».")
+    else:
+        await cb.message.answer(f"🖨 Заказ №{oid} отправлен на принтер. Слежу за очередью — напишу, если что-то пойдёт не так.")
 
 
 @dp.message()
@@ -143,8 +110,7 @@ async def setup_profile(bot: Bot) -> None:
     """Меню, команды и описание бота; кнопка «Тюша» в меню открывает Mini App."""
     admin_cmds = [BotCommand(command="start", description="Открыть Тюшу"),
                   BotCommand(command="admin", description="Ссылка на панель заказов"),
-                  BotCommand(command="testprint", description="Пробный лист"),
-                  BotCommand(command="printers", description="Состояние принтера")]
+                  BotCommand(command="testprint", description="Пробный лист")]
     try:
         await bot.set_my_commands([BotCommand(command="start", description="Открыть Тюшу")])
         for admin in config.ADMIN_IDS:
