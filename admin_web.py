@@ -17,6 +17,7 @@ from PIL import Image
 import config
 import db
 import pricing
+import miniapi
 import printing
 import service
 
@@ -114,7 +115,8 @@ async def login(request: web.Request) -> web.Response:
         await asyncio.sleep(1)  # притормаживаем подбор пароля
         return web.json_response({"ok": False, "error": "Неверный пароль"}, status=401)
     resp = web.json_response({"ok": True})
-    resp.set_cookie(COOKIE, _token(), max_age=30 * 24 * 3600, httponly=True, samesite="Strict")
+    resp.set_cookie(COOKIE, _token(), max_age=30 * 24 * 3600, httponly=True, samesite="Strict",
+                    secure=config.ADMIN_URL.startswith("https://"))
     return resp
 
 
@@ -258,6 +260,10 @@ async def printer_cancel_job(request: web.Request) -> web.Response:
     return web.json_response({"ok": True, "message": "Задание удалено из очереди"})
 
 
+async def miniapp_index(request: web.Request) -> web.StreamResponse:
+    return web.FileResponse(config.BASE / "miniapp" / "index.html")
+
+
 def make_app() -> web.Application:
     app = web.Application(middlewares=[auth_middleware], client_max_size=2 * 1024 * 1024)
     app.add_routes([
@@ -271,6 +277,9 @@ def make_app() -> web.Application:
         web.get(r"/api/orders/{id:\d+}/download", order_zip),
         web.get("/api/prices", prices_get), web.put("/api/prices", prices_put),
         web.post(r"/api/printer/jobs/{job:\d+}/cancel", printer_cancel_job),
+        *miniapi.routes(),
+        web.get("/miniapp", miniapp_index), web.get("/miniapp/", miniapp_index),
+        web.static("/miniapp", config.BASE / "miniapp"),
         web.static("/static", STATIC),
     ])
     return app

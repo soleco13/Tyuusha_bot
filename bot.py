@@ -42,7 +42,8 @@ sessions: dict[int, dict] = {}
 _ack_tasks: dict[int, asyncio.Task] = {}
 _busy: set[int] = set()  # пользователи, у которых сейчас идёт долгая операция
 
-MAIN_MENU = kb([("🃏 Игральные карты из фото", "menu:cards")],
+MAIN_MENU = kb([("🐾 Открыть приложение", f"webapp:{config.ADMIN_URL}/miniapp/")],
+               [("🃏 Игральные карты из фото", "menu:cards")],
                [("🖼 Напечатать фото", "menu:photo")],
                [("📦 Мои заказы", "menu:orders"), ("🐾 Как это работает", "menu:help")])
 DONE_KB = kb([("✅ Готово", "upload:done")], [("✖ Отмена", "cancel")])
@@ -603,6 +604,8 @@ async def setup_profile(bot: Bot) -> None:
                               BotCommand(command="printers", description="Состояние принтера")]
     try:
         await bot.set_my_commands(user_cmds)
+        from aiogram.types import MenuButtonWebApp, WebAppInfo
+        await bot.set_chat_menu_button(menu_button=MenuButtonWebApp(text="Тюша", web_app=WebAppInfo(url=f"{config.ADMIN_URL}/miniapp/")))
         for admin in config.ADMIN_IDS:
             await bot.set_my_commands(admin_cmds, scope=BotCommandScopeChat(chat_id=admin))
         await bot.set_my_short_description("Тюша 🐾 печатает ваши фото и делает игральные карты с вашими снимками")

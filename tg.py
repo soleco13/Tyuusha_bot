@@ -5,7 +5,7 @@ import json
 import logging
 
 from aiogram import Bot
-from aiogram.types import FSInputFile, InlineKeyboardButton, InlineKeyboardMarkup, Message
+from aiogram.types import FSInputFile, InlineKeyboardButton, InlineKeyboardMarkup, Message, WebAppInfo
 
 import config
 
@@ -18,10 +18,14 @@ _file_ids: dict[str, str] = json.loads(FILE_IDS.read_text("utf-8")) if FILE_IDS.
 
 
 def kb(*rows: list[tuple[str, str]]) -> InlineKeyboardMarkup:
-    """Кнопки: ("текст", "callback") или ("текст", "url:https://...")."""
-    return InlineKeyboardMarkup(inline_keyboard=[[
-        InlineKeyboardButton(text=t, url=d[4:]) if d.startswith("url:") else
-        InlineKeyboardButton(text=t, callback_data=d) for t, d in row] for row in rows])
+    """Кнопки: ("текст", "callback"), ("текст", "url:https://...") или ("текст", "webapp:https://...")."""
+    def button(t: str, d: str) -> InlineKeyboardButton:
+        if d.startswith("url:"):
+            return InlineKeyboardButton(text=t, url=d[4:])
+        if d.startswith("webapp:"):
+            return InlineKeyboardButton(text=t, web_app=WebAppInfo(url=d[7:]))
+        return InlineKeyboardButton(text=t, callback_data=d)
+    return InlineKeyboardMarkup(inline_keyboard=[[button(t, d) for t, d in row] for row in rows])
 
 
 async def send_anim(chat_id: int, name: str, caption: str | None = None,
