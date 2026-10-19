@@ -14,6 +14,7 @@ from pathlib import Path
 from aiohttp import web
 from PIL import Image
 
+import agents
 import config
 import db
 import pricing
@@ -54,7 +55,7 @@ async def auth_middleware(request: web.Request, handler):
         return web.json_response({"ok": False, "error": "Нужно войти заново"}, status=401)
     try:
         return await handler(request)
-    except service.ServiceError as e:
+    except (service.ServiceError, agents.PrintError) as e:
         return web.json_response({"ok": False, "error": str(e)}, status=400)
     except (ValueError, KeyError) as e:
         return web.json_response({"ok": False, "error": f"Неверные данные: {e}"}, status=400)
@@ -136,7 +137,12 @@ async def summary(request: web.Request) -> web.Response:
     counts = db.count_by_status()
     today = time.strftime("%Y-%m-%d")
     today_count, today_sum = db.stats_since(today)
-    if config.PRINT_MODE == "browser":
+    profiles = {}
+    if config.PRINT_MODE == "agent":
+        printer = agents.printer_summary()
+        profiles = {p["key"]: {"agent": p["agent_name"], "printer": p["printer"], "ready": p["ready"],
+                               "tuned": p["has_devmode"]} for p in agents.overview()["profiles"]}
+    elif config.PRINT_MODE == "browser":
         printer = {"name": "печать из браузера", "ok": True, "problems": [], "jobs": []}
     elif config.PRINT_MODE == "printer":
         printer = await asyncio.to_thread(printing.printer_status, config.PRINTER_NAME)
@@ -148,7 +154,7 @@ async def summary(request: web.Request) -> web.Response:
                    for k, (t, st) in GROUPS.items()],
         "counts": counts,
         "today": {"orders": today_count, "amount": pricing.format_rub(today_sum)},
-        "printer": printer, "print_mode": config.PRINT_MODE,
+        "printer": printer, "print_mode": config.PRINT_MODE, "profiles": profiles,
         "server_time": db.now(),
     })
 
@@ -202,6 +208,8 @@ async def order_action(request: web.Request) -> web.Response:
 
 
 def _print_message(o: dict) -> str:
+    if o["status"] == "printing" and config.PRINT_MODE == "agent":
+        return "Задание отправлено на компьютер с принтером — статус обновится сам"
     if o["status"] == "printing":
         return "Отправлено на принтер — слежу за очередью"
     done = {"fronts_printed": "Лицевые стороны готовы — теперь рубашки", "printed": "Напечатано",
@@ -355,6 +363,73 @@ async def printer_cancel_job(request: web.Request) -> web.Response:
     return web.json_response({"ok": True, "message": "Задание удалено из очереди"})
 
 
+# ---------- принтеры: компьютеры с агентом и профили печати ----------
+
+AGENT_EXE = config.BASE / "agent" / "dist" / "TyushaPrint.exe"
+
+
+async def printers_overview(request: web.Request) -> web.Response:
+    return web.json_response({"ok": True, "mode": config.PRINT_MODE, **agents.overview(),
+                              "download": AGENT_EXE.exists()})
+
+
+async def pair_code(request: web.Request) -> web.Response:
+    return web.json_response({"ok": True, "code": agents.new_pair_code(), "expires_in": agents.PAIR_TTL})
+
+
+async def agent_update(request: web.Request) -> web.Response:
+    agent_id = int(request.match_info["id"])
+    body = await request.json()
+    if body.get("revoke"):
+        agents.revoke(agent_id)
+        return web.json_response({"ok": True, "message": "Компьютер отключён — печатать на нём больше нельзя"})
+    agents.rename(agent_id, str(body.get("name", "")))
+    return web.json_response({"ok": True, "message": "Название сохранено"})
+
+
+async def profile_update(request: web.Request) -> web.Response:
+    body = await request.json()
+    agent_id = int(body["agent_id"]) if body.get("agent_id") else None
+    agents.bind_profile(request.match_info["key"], agent_id, body.get("printer") or None)
+    return web.json_response({"ok": True, "message": "Профиль сохранён"})
+
+
+async def profile_test(request: web.Request) -> web.Response:
+    """Пробный лист через профиль: проверка связи, принтера и масштаба 1:1."""
+    from PIL import ImageDraw
+    import cards
+    key = request.match_info["key"]
+    path = config.DATA / "testprint.png"
+    page = Image.new("RGB", cards.A4, "white")
+    d = ImageDraw.Draw(page)
+    x, y, side = cards.mm(80), cards.mm(40), cards.mm(50)
+    d.rectangle((x, y, x + side, y + side), outline="black", width=4)
+    d.text((cards.A4[0] // 2, cards.mm(25)), "Тюша · пробный лист", font=cards.rank_font(cards.mm(5)), fill="black", anchor="mm")
+    d.text((cards.A4[0] // 2, y + side + cards.mm(10)), "Сторона квадрата должна быть ровно 50 мм",
+           font=cards.rank_font(cards.mm(3.5)), fill="black", anchor="mm")
+    d.text((cards.A4[0] // 2, y + side + cards.mm(18)), f"Профиль: {agents.PROFILES.get(key, key)}",
+           font=cards.rank_font(cards.mm(3.5)), fill="black", anchor="mm")
+    await asyncio.to_thread(page.save, path, dpi=(cards.DPI, cards.DPI))
+    job = agents.submit(None, key, "Тюша: пробный лист", [path], True, "normal")
+    return web.json_response({"ok": True, "job_id": job["id"],
+                              "message": f"Пробный лист отправлен на «{job['settings']['printer']}»"})
+
+
+async def print_job_state(request: web.Request) -> web.Response:
+    job = db.get_print_job(int(request.match_info["id"]))
+    if not job:
+        raise web.HTTPNotFound()
+    return web.json_response({"ok": True, "state": job["state"], "detail": job["detail"], "problem": bool(job["problem"])})
+
+
+async def agent_download(request: web.Request) -> web.StreamResponse:
+    if not AGENT_EXE.exists():
+        return web.Response(status=404, content_type="text/plain", charset="utf-8",
+                            text="Программа ещё не собрана на сервере: запустите agent/build_agent.bat на Windows "
+                                 "и положите agent/dist/TyushaPrint.exe на сервер.")
+    return web.FileResponse(AGENT_EXE, headers={"Content-Disposition": 'attachment; filename="TyushaPrint.exe"'})
+
+
 async def miniapp_index(request: web.Request) -> web.StreamResponse:
     return web.FileResponse(config.BASE / "miniapp" / "index.html")
 
@@ -373,6 +448,13 @@ def make_app() -> web.Application:
         web.get("/api/prices", prices_get), web.put("/api/prices", prices_put),
         web.post(r"/api/printer/jobs/{job:\d+}/cancel", printer_cancel_job),
         *miniapi.routes(),
+        *agents.routes(),
+        web.get("/api/printers", printers_overview), web.post("/api/printers/pair-code", pair_code),
+        web.post(r"/api/printers/agents/{id:\d+}", agent_update),
+        web.put("/api/printers/profiles/{key}", profile_update),
+        web.post("/api/printers/profiles/{key}/test", profile_test),
+        web.get(r"/api/printers/jobs/{id:\d+}", print_job_state),
+        web.get("/agent/download", agent_download),
         web.get(r"/print/{id:\d+}/{part:front|back}", print_page), web.get("/print/{id:test}", print_page),
         web.get("/print/test/image", print_test_image),
         web.get("/miniapp", miniapp_index), web.get("/miniapp/", miniapp_index),

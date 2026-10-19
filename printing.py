@@ -120,32 +120,122 @@ def cancel_job(printer: str, job_id: int) -> None:
         win32print.ClosePrinter(h)
 
 
-def _make_dc(printer: str, color: bool, quality: str):
-    handle = win32print.OpenPrinter(printer)
+# ---------- настройки драйвера (профили печати) ----------
+# Профиль хранит настройки окна драйвера (тип бумаги, качество, цвет и всё, что умеет драйвер Epson):
+# открытые поля DEVMODE + закрытую часть драйвера (DriverData) в base64. Они относятся к конкретному принтеру.
+
+DEVMODE_FIELDS = ("PaperSize", "Orientation", "Copies", "DefaultSource", "PrintQuality", "Color", "Duplex",
+                  "YResolution", "Collate", "MediaType", "DitherType", "ICMMethod", "ICMIntent", "Scale", "FormName")
+DM_OUT_BUFFER, DM_IN_PROMPT, DM_IN_BUFFER = 2, 4, 8
+IDOK = 1
+
+
+def _default_devmode(printer: str):
+    h = win32print.OpenPrinter(printer)
     try:
-        devmode = win32print.GetPrinter(handle, 2)["pDevMode"]
+        dm = win32print.GetPrinter(h, 2)["pDevMode"]
+        if dm is None:  # у части драйверов нет сохранённых настроек — спрашиваем драйвер
+            import pywintypes
+            size = win32print.DocumentProperties(0, h, printer, None, None, 0)
+            dm = pywintypes.DEVMODEType(max(0, size - 220))
+            win32print.DocumentProperties(0, h, printer, dm, None, DM_OUT_BUFFER)
+        return dm
     finally:
-        win32print.ClosePrinter(handle)
-    devmode.Color = win32con.DMCOLOR_COLOR if color else win32con.DMCOLOR_MONOCHROME
-    devmode.PaperSize = win32con.DMPAPER_A4
-    devmode.Orientation = win32con.DMORIENT_PORTRAIT
-    devmode.Copies = 1
-    devmode.PrintQuality = QUALITY.get(quality, QUALITY["normal"])
-    devmode.Fields |= (win32con.DM_COLOR | win32con.DM_PAPERSIZE | win32con.DM_ORIENTATION
-                       | win32con.DM_COPIES | win32con.DM_PRINTQUALITY)
-    hdc = win32gui.CreateDC("WINSPOOL", printer, devmode)
+        win32print.ClosePrinter(h)
+
+
+def devmode_to_dict(dm) -> dict:
+    import base64
+    d = {f: getattr(dm, f) for f in DEVMODE_FIELDS}
+    d.update(Fields=dm.Fields, DriverExtra=dm.DriverExtra, DriverVersion=dm.DriverVersion, DeviceName=dm.DeviceName,
+             DriverData=base64.b64encode(bytes(dm.DriverData or b"")).decode() if dm.DriverExtra else "")
+    return d
+
+
+def devmode_from_dict(printer: str, d: dict | None):
+    """Настройки драйвера из профиля поверх настроек принтера по умолчанию (драйвер проверяет их сам)."""
+    import base64
+    dm = _default_devmode(printer)
+    if not d:
+        return dm
+    for f in DEVMODE_FIELDS:
+        if f in d and d[f] is not None:
+            try:
+                setattr(dm, f, d[f])
+            except Exception:
+                pass
+    dm.Fields = d.get("Fields", dm.Fields)
+    raw = base64.b64decode(d["DriverData"]) if d.get("DriverData") else b""
+    if raw and len(raw) == dm.DriverExtra and d.get("DriverVersion") == dm.DriverVersion:
+        dm.DriverData = raw  # закрытая часть — только для того же драйвера той же версии
+    h = win32print.OpenPrinter(printer)
+    try:
+        win32print.DocumentProperties(0, h, printer, dm, dm, DM_IN_BUFFER | DM_OUT_BUFFER)
+    finally:
+        win32print.ClosePrinter(h)
+    return dm
+
+
+def edit_devmode(printer: str, current: dict | None, hwnd: int = 0) -> dict | None:
+    """Открывает родное окно настроек драйвера. None — человек нажал «Отмена»."""
+    dm_in = devmode_from_dict(printer, current)
+    dm_out = devmode_from_dict(printer, current)
+    h = win32print.OpenPrinter(printer)
+    try:
+        res = win32print.DocumentProperties(hwnd, h, printer, dm_out, dm_in, DM_IN_PROMPT | DM_IN_BUFFER | DM_OUT_BUFFER)
+    finally:
+        win32print.ClosePrinter(h)
+    return devmode_to_dict(dm_out) if res == IDOK else None
+
+
+def devmode_summary(d: dict | None) -> str:
+    if not d:
+        return "настройки принтера по умолчанию"
+    quality = {-1: "черновое", -2: "низкое", -3: "обычное", -4: "высокое"}.get(d.get("PrintQuality"), None)
+    paper = {9: "A4", 11: "A5", 13: "B5"}.get(d.get("PaperSize"), "своя бумага")
+    parts = ["цветная" if d.get("Color") == 2 else "ч/б", paper]
+    if quality:
+        parts.append(f"качество {quality}")
+    elif (d.get("PrintQuality") or 0) > 0:
+        parts.append(f"{d['PrintQuality']} dpi")
+    if d.get("DriverData"):
+        parts.append("тип бумаги и прочее — из окна драйвера")
+    return ", ".join(parts)
+
+
+def _make_dc(printer: str, color: bool, quality: str, devmode: dict | None = None):
+    if devmode is not None:  # профиль: всё из окна драйвера, поверх — только то, что задаёт заказ
+        dm = devmode_from_dict(printer, devmode)
+        if not color:
+            dm.Color = win32con.DMCOLOR_MONOCHROME
+    else:
+        handle = win32print.OpenPrinter(printer)
+        try:
+            dm = win32print.GetPrinter(handle, 2)["pDevMode"]
+        finally:
+            win32print.ClosePrinter(handle)
+        dm.Color = win32con.DMCOLOR_COLOR if color else win32con.DMCOLOR_MONOCHROME
+        dm.PrintQuality = QUALITY.get(quality, QUALITY["normal"])
+        dm.Fields |= win32con.DM_PRINTQUALITY
+    # листы всегда A4 в масштабе 1:1 — это не меняется ни профилем, ни драйвером
+    dm.PaperSize = win32con.DMPAPER_A4
+    dm.Orientation = win32con.DMORIENT_PORTRAIT
+    dm.Copies = 1
+    dm.Fields |= (win32con.DM_COLOR | win32con.DM_PAPERSIZE | win32con.DM_ORIENTATION | win32con.DM_COPIES)
+    hdc = win32gui.CreateDC("WINSPOOL", printer, dm)
     return win32ui.CreateDCFromHandle(hdc)
 
 
 def print_pages(pages: list[Path], *, printer: str | None, job_name: str,
                 color: bool = True, quality: str = "normal",
-                mode: str = "printer", file_dir: Path | None = None) -> dict:
+                mode: str = "printer", file_dir: Path | None = None, devmode: dict | None = None) -> dict:
     """mode="printer" — отправить на принтер; mode="file" — только сложить листы
     в папку (для проверки без расхода бумаги).
     Возвращает {"printer", "job_id", "message"}; job_id нужен, чтобы следить за заданием."""
     if mode == "file":
         assert file_dir is not None
-        target = file_dir / job_name
+        safe = "".join("_" if c in '<>:"/\\|?*' else c for c in job_name).strip(" .") or "job"
+        target = file_dir / safe
         target.mkdir(parents=True, exist_ok=True)
         for p in pages:
             shutil.copy(p, target / p.name)
@@ -157,7 +247,7 @@ def print_pages(pages: list[Path], *, printer: str | None, job_name: str,
     if not printer:
         raise RuntimeError("Принтер не найден: укажите PRINTER_NAME в .env")
 
-    dc = _make_dc(printer, color, quality)
+    dc = _make_dc(printer, color, quality, devmode)
     try:
         dpi_x, dpi_y = dc.GetDeviceCaps(LOGPIXELSX), dc.GetDeviceCaps(LOGPIXELSY)
         off_x, off_y = dc.GetDeviceCaps(PHYSICALOFFSETX), dc.GetDeviceCaps(PHYSICALOFFSETY)

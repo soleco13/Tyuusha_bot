@@ -76,6 +76,10 @@ async def test_print(message: Message) -> None:
     """Пробный лист из браузера: проверить связь с принтером и что масштаб 1:1 (квадрат ровно 50 мм)."""
     if message.from_user.id not in config.ADMIN_IDS:
         return
+    if config.PRINT_MODE == "agent":
+        await message.answer(f"🖨 Пробный лист: панель → «Принтеры» → «Пробный лист» у нужного профиля — "
+                             f"{config.ADMIN_URL}/#printers. Квадрат на листе должен быть ровно 50 мм.")
+        return
     await message.answer(f"🖨 Пробный лист: откройте {config.ADMIN_URL}/print/test в браузере на компьютере с принтером "
                          "(сначала войдите в админку). Квадрат на листе должен быть ровно 50 мм.")
 
@@ -93,7 +97,9 @@ async def admin_action(cb: CallbackQuery) -> None:
         await cb.message.answer(f"⚠️ Заказ №{oid}: {html.escape(str(e))}")
         return
     await lock(cb, "Печать запущена")
-    if config.PRINT_MODE == "browser":
+    if config.PRINT_MODE == "agent":
+        await cb.message.answer(f"🖨 Заказ №{oid}: задание отправлено на компьютер с принтером. Напишу, если что-то пойдёт не так.")
+    elif config.PRINT_MODE == "browser":
         part = "back" if action == "backs" else "front"
         await cb.message.answer(f"🖨 Заказ №{oid}: откройте окно печати в админке — {config.ADMIN_URL}/print/{oid}/{part}\n"
                                 "Напечатайте листы и нажмите там «Напечатано».")

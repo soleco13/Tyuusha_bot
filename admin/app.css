@@ -323,3 +323,34 @@ textarea:focus, .input:focus { outline: none; border-color: var(--brand); box-sh
   .kv dt { margin-top: 6px; }
   .search { max-width: none; }
 }
+
+/* ---------- принтеры ---------- */
+.page-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; flex-wrap: wrap; margin-bottom: 16px; }
+.page-head > div:first-child { min-width: 0; flex: 1 1 320px; }
+.page-head-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.section-title { margin: 22px 0 10px; font-size: 13px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); }
+.agent-card, .profile-card { display: flex; flex-direction: column; gap: 12px; margin-bottom: 12px; }
+.agent-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; flex-wrap: wrap; }
+.agent-name { font-size: 16px; }
+.agent-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+.agent-card .dot, .pr-line .dot { display: inline-block; vertical-align: middle; margin-right: 6px; }
+.pr-list { display: flex; flex-direction: column; gap: 6px; }
+.pr-line { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 8px; align-items: center; font-size: 14px; }
+.pr-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+.pr-bad { color: var(--danger); }
+.pr-more summary { cursor: pointer; color: var(--muted); font-size: 13px; margin-bottom: 6px; }
+.profiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(320px, 100%), 1fr)); gap: 12px; }
+.profiles .profile-card { margin-bottom: 0; }
+.profile-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.profile-grid label { display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: var(--muted); min-width: 0; }
+.profile-grid select { min-height: 38px; color: var(--text); }
+.empty-agents { display: flex; flex-direction: row; gap: 14px; align-items: center; }
+.empty-agents img { width: 64px; border-radius: 50%; flex: none; }
+.pair-steps { padding-left: 20px; margin: 8px 0; line-height: 1.7; }
+.pair-steps code { background: var(--surface-2); padding: 2px 6px; border-radius: 6px; user-select: all; overflow-wrap: anywhere; }
+.pair-code { font: 800 44px/1.1 Consolas, ui-monospace, monospace; letter-spacing: .12em; text-align: center; padding: 14px;
+  border-radius: 14px; background: var(--blue-bg); color: var(--brand); margin: 6px 0; user-select: all; }
+.pair-code.done { background: var(--ok-bg); color: var(--ok); }
+@media (max-width: 640px) { .profile-grid { grid-template-columns: 1fr; } .pair-code { font-size: 34px; } }
+
+[hidden] { display: none !important; }

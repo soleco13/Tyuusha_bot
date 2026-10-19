@@ -145,6 +145,7 @@ function renderShell() {
       <nav class="nav">
         <button data-view="orders">Заказы</button>
         <button data-view="prices">Цены</button>
+        <button data-view="printers">Принтеры</button>
       </nav>
       <div class="spacer"></div>
       <button class="chip" id="printer-chip" title="Состояние принтера и очередь"><span class="dot"></span><span>Принтер…</span></button>
@@ -180,20 +181,19 @@ function renderSoundChip() {
 
 function go(view) {
   state.view = view;
-  location.hash = view === "prices" ? "prices" : (state.openId ? `order=${state.openId}` : "");
+  location.hash = view !== "orders" ? view : (state.openId ? `order=${state.openId}` : "");
   renderPage();
 }
 
 function applyHash() {
   const h = location.hash.slice(1);
   const m = h.match(/order=(\d+)/);
-  if (h === "prices") state.view = "prices";
-  else state.view = "orders";
+  state.view = ["prices", "printers"].includes(h) ? h : "orders";
   renderPage();
   if (m) openOrder(Number(m[1]));
 }
 window.addEventListener("hashchange", () => {
-  const view = location.hash === "#prices" ? "prices" : "orders";
+  const view = ["#prices", "#printers"].includes(location.hash) ? location.hash.slice(1) : "orders";
   if (view !== state.view && document.getElementById("page")) { state.view = view; renderPage(); }
   const m = location.hash.match(/order=(\d+)/);
   if (m && Number(m[1]) !== state.openId) openOrder(Number(m[1]));
@@ -201,7 +201,9 @@ window.addEventListener("hashchange", () => {
 
 function renderPage() {
   $app.querySelectorAll("[data-view]").forEach((b) => b.classList.toggle("active", b.dataset.view === state.view));
+  stopPrintersTimer();
   if (state.view === "prices") return renderPrices();
+  if (state.view === "printers") return renderPrinters();
   const page = document.getElementById("page");
   page.innerHTML = `
     <section class="stats" id="stats"></section>
@@ -356,6 +358,20 @@ function renderList() {
 
 // ---------- действия ----------
 
+/** Куда уйдёт задание при печати через компьютер с принтером. */
+function routeNote(o) {
+  if (state.summary?.print_mode !== "agent") return "";
+  const prof = state.summary.profiles?.[o.kind === "cards" ? "cards" : "photo"];
+  if (!prof?.agent || !prof?.printer) {
+    return `<div class="banner error" style="margin-bottom:10px">⚠️ <div>Для этого материала не выбран принтер<div class="small">Откройте «Принтеры» и настройте профиль.</div></div></div>`;
+  }
+  if (!prof.ready) {
+    return `<div class="banner warn" style="margin-bottom:10px">⚠️ <div>Компьютер «${esc(prof.agent)}» или принтер сейчас не готов<div class="small">Проверьте, что программа «Тюша Печать» запущена, а принтер включён. Иначе печать не начнётся.</div></div></div>`;
+  }
+  return `<div class="banner ok" style="margin-bottom:10px">🖨 <div>Печатает «${esc(prof.agent)}» → ${esc(prof.printer)}
+    <div class="small">${prof.tuned ? "С настройками драйвера из профиля." : "Настройки драйвера по умолчанию — их можно задать в программе на компьютере."} Всё остальное выставится само.</div></div></div>`;
+}
+
 const CANCEL_PRESETS = ["Плохое качество фото", "Клиент попросил отменить", "Закончились материалы", "Принтер не работает"];
 
 const ACTIONS = {
@@ -366,7 +382,7 @@ const ACTIONS = {
       const sheets = p.sheets ?? "?";
       return {
         title: `Печать заказа №${o.id}`,
-        html: `<p>Перед печатью подготовьте принтер:</p><ol>
+        html: `${routeNote(o)}<p>Перед печатью подготовьте принтер:</p><ol>
           <li>Положите в лоток <b>${sheets} л. A4</b> ${cardsDeck ? "плотной фотобумаги (200–300 г/м²)" : "бумаги для фото"}.</li>
           <li>Проверьте, что принтер включён и чернил достаточно.</li>
           ${cardsDeck ? "<li>Сначала печатаются лицевые стороны, затем — рубашки.</li>" : ""}</ol>`,
@@ -378,7 +394,7 @@ const ACTIONS = {
     label: "🖨 Печать рубашек", style: "primary",
     confirm: (o) => ({
       title: `Рубашки для заказа №${o.id}`,
-      html: `<ol><li>Дайте чернилам высохнуть 1–2 минуты.</li>
+      html: `${routeNote(o)}<ol><li>Дайте чернилам высохнуть 1–2 минуты.</li>
         <li>Переверните стопку чистой стороной для печати, <b>первый лист сверху</b>, порядок не меняйте.</li>
         <li>Положите обратно в лоток.</li></ol>
         <p class="small">Совет: если печатаете впервые — проверьте ориентацию на одном листе.</p>`,
@@ -708,6 +724,7 @@ function renderPrinter() {
   const p = s.printer;
   const problems = [...p.problems, ...p.jobs.filter((j) => j.problem).map((j) => j.states.join(", "))];
   const label = s.print_mode === "file" ? "Режим: в файлы" : s.print_mode === "browser" ? "Печать из браузера" :
+    s.print_mode === "agent" && problems.length ? problems[0] :
     problems.length ? `Принтер: ${problems[0]}` : (p.jobs.length ? `Принтер: в очереди ${p.jobs.length}` : "Принтер готов");
   chip.innerHTML = `<span class="dot ${problems.length ? "bad" : (p.jobs.length ? "warn" : "ok")}"></span><span>${esc(label)}</span>`;
   pop.classList.toggle("hidden", !state.printerOpen);
@@ -718,9 +735,10 @@ function renderPrinter() {
     ${problems.length ? `<div class="banner error" style="margin-top:10px">⚠️ ${esc(problems.join("; "))}</div>` :
       `<div class="banner ok" style="margin-top:10px">Ошибок нет</div>`}
     <p class="hint">Windows знает не обо всех проблемах: если задание висит долго — проверьте сам принтер.</p>
+    ${s.print_mode === "agent" ? '<p><a class="btn sm" href="#printers">Компьютеры и профили печати</a></p>' : ""}
     <div style="margin-top:6px"><b>Очередь печати</b></div>
     ${p.jobs.length ? p.jobs.map((j) => `<div class="job"><div>${esc(j.document)}<div class="small ${j.problem ? "" : "muted"}" style="${j.problem ? "color:var(--danger)" : ""}">${esc(j.states.join(", "))}</div></div>
-      <button class="btn sm danger" data-job="${j.id}">Удалить</button></div>`).join("") : '<div class="hint" style="padding:8px 0">Очередь пуста</div>'}`;
+      ${s.print_mode === "agent" ? "" : `<button class="btn sm danger" data-job="${j.id}">Удалить</button>`}</div>`).join("") : '<div class="hint" style="padding:8px 0">Очередь пуста</div>'}`;
   pop.querySelector("[data-close]").addEventListener("click", () => { state.printerOpen = false; renderPrinter(); });
   pop.querySelectorAll("[data-job]").forEach((b) => b.addEventListener("click", async () => {
     const ok = await confirmModal({ title: "Удалить задание из очереди?", html: "<p>Если это заказ, он вернётся в предыдущий статус при следующей проверке — лучше снимать задание из карточки заказа.</p>", ok: "Удалить", danger: true });
@@ -782,6 +800,205 @@ async function renderPrices() {
       } catch (ex) { label.className = "hint"; toast(ex.message, "error"); }
     });
   });
+}
+
+// ---------- принтеры: компьютеры с программой «Тюша Печать» и профили ----------
+
+let printersTimer = null;
+function stopPrintersTimer() { if (printersTimer) clearInterval(printersTimer); printersTimer = null; }
+
+function seenText(sec) {
+  if (sec < 60) return "только что";
+  const m = Math.round(sec / 60);
+  return m < 60 ? `${m} мин назад` : `${Math.round(m / 60)} ч назад`;
+}
+
+function printerLine(pr) {
+  const tone = pr.ok ? "ok" : "bad";
+  const text = pr.ok ? (pr.jobs?.length ? `в очереди ${pr.jobs.length}` : "готов") : (pr.problems.join("; ") || "есть проблемы");
+  return `<div class="pr-line"><span class="dot ${tone}"></span><span class="pr-name">${esc(pr.name)}</span><span class="${pr.ok ? "muted" : "pr-bad"}">${esc(text)}</span></div>`;
+}
+
+function agentCard(a) {
+  const used = new Set((state.printers?.profiles || []).filter((p) => p.agent_id === a.id).map((p) => p.printer));
+  const main = a.printers.filter((p) => used.has(p.name));
+  const other = a.printers.filter((p) => !used.has(p.name));
+  return `<section class="card agent-card">
+    <div class="agent-head">
+      <div><b class="agent-name">${esc(a.name)}</b>
+        <div class="small ${a.online ? "" : "pr-bad"}"><span class="dot ${a.online ? "ok" : "bad"}"></span>
+          ${a.online ? "на связи" : `не на связи · ${seenText(a.seen_ago)}`}${a.version ? ` · программа ${esc(a.version)}` : ""}${a.dry_run ? " · пробный режим" : ""}</div></div>
+      <div class="agent-actions">
+        <button class="btn sm" data-rename="${a.id}">Переименовать</button>
+        <button class="btn sm danger" data-revoke="${a.id}">Отключить</button>
+      </div>
+    </div>
+    ${a.current ? `<div class="banner info"><span class="spinner"></span><div>${esc(a.current.label)}<div class="small">${esc(a.current.state)}</div></div></div>` : ""}
+    ${main.length ? `<div class="pr-list">${main.map(printerLine).join("")}</div>` : '<div class="hint">Принтеры этого компьютера пока не выбраны ни в одном профиле.</div>'}
+    ${other.length ? `<details class="pr-more"><summary>Другие принтеры на компьютере · ${other.length}</summary><div class="pr-list">${other.map(printerLine).join("")}</div></details>` : ""}
+  </section>`;
+}
+
+function profileCard(p, agents) {
+  const agent = agents.find((a) => a.id === p.agent_id);
+  const printers = agent ? agent.printers : [];
+  const status = !p.agent_id || !p.printer ? ["bad", "Не выбран компьютер или принтер"] :
+    !agent?.online ? ["bad", `«${p.agent_name}» не на связи`] :
+    !p.printer_info ? ["bad", "Принтер не найден на компьютере"] :
+    p.printer_info.problems?.length ? ["warn", p.printer_info.problems.join("; ")] : ["ok", "Готов к печати"];
+  return `<section class="card profile-card" data-profile="${p.key}">
+    <div class="agent-head"><b>${esc(p.title)}</b><span class="badge ${status[0] === "ok" ? "printed" : status[0] === "warn" ? "fronts_printed" : "error"}">${esc(status[1])}</span></div>
+    <div class="profile-grid">
+      <label>Компьютер<select class="input" data-field="agent">
+        <option value="">— не выбран —</option>
+        ${agents.map((a) => `<option value="${a.id}" ${a.id === p.agent_id ? "selected" : ""}>${esc(a.name)}${a.online ? "" : " (не на связи)"}</option>`).join("")}
+      </select></label>
+      <label>Принтер<select class="input" data-field="printer">
+        <option value="">— не выбран —</option>
+        ${printers.map((pr) => `<option ${pr.name === p.printer ? "selected" : ""}>${esc(pr.name)}</option>`).join("")}
+      </select></label>
+    </div>
+    <div class="hint">${p.has_devmode ? `Настройки драйвера: ${esc(p.devmode_summary || "заданы")}` :
+      "Настройки драйвера не заданы — печать пойдёт с настройками принтера по умолчанию. Чтобы выбрать тип бумаги и качество, на компьютере в программе «Тюша Печать» нажмите «Настроить…» у этого профиля."}</div>
+    <div class="row-end"><span class="hint" data-state></span>
+      <button class="btn sm" data-test="${p.key}" ${status[0] === "bad" ? "disabled" : ""}>Пробный лист</button>
+      <button class="btn sm primary" data-save="${p.key}" hidden>Сохранить</button></div>
+  </section>`;
+}
+
+async function renderPrinters(soft = false) {
+  const page = document.getElementById("page");
+  if (!soft) page.innerHTML = `<div class="empty">Загружаем принтеры…</div>`;
+  let data;
+  try { data = await api("/api/printers"); }
+  catch (e) { if (!soft) page.innerHTML = `<div class="empty">Не удалось загрузить: ${esc(e.message)}</div>`; return; }
+  if (state.view !== "printers") return;
+  state.printers = data;
+  const agentsHtml = data.agents.length ? data.agents.map(agentCard).join("") :
+    `<div class="card empty-agents"><img src="/static/tyusha.png" alt=""><div><b>Компьютер с принтером ещё не подключён</b>
+      <p class="hint">Нажмите «Подключить компьютер» — появится код. На компьютере с принтером запустите программу «Тюша Печать» и введите его.</p></div></div>`;
+  if (soft && document.getElementById("agents-list")) {
+    // обновляем только состояние компьютеров — выпадающие списки профилей не трогаем, их могут сейчас менять
+    document.getElementById("agents-list").innerHTML = agentsHtml;
+    bindAgentButtons();
+    return;
+  }
+  page.innerHTML = `
+    <div class="page-head"><div><h2 style="margin:0">Принтеры</h2>
+      <p class="muted" style="margin:4px 0 0">Печатает программа «Тюша Печать» на компьютере, к которому подключён принтер. Оператор только нажимает «Печать» в заказе.</p></div>
+      <div class="page-head-actions">
+        ${data.download ? '<a class="btn" href="/agent/download">Скачать программу</a>' : ""}
+        <button class="btn primary" id="pair-btn">Подключить компьютер</button></div></div>
+    ${data.mode !== "agent" ? `<div class="banner warn">⚠️ <div>Сейчас на сервере режим печати «${esc(data.mode)}»
+      <div class="small">Чтобы печатать через компьютер с принтером, в файле .env на сервере укажите <b>PRINT_MODE=agent</b> и перезапустите бота.</div></div></div>` : ""}
+    <h3 class="section-title">Компьютеры с принтером</h3>
+    <div id="agents-list">${agentsHtml}</div>
+    <h3 class="section-title">Профили печати</h3>
+    <p class="hint" style="margin:-4px 0 10px">Профиль — это материал: на каком компьютере и принтере его печатать и с какими настройками драйвера. Заказ сам выбирает профиль.</p>
+    <div class="profiles">${data.profiles.map((p) => profileCard(p, data.agents)).join("")}</div>`;
+  document.getElementById("pair-btn").addEventListener("click", pairModal);
+  bindAgentButtons();
+  page.querySelectorAll(".profile-card").forEach(bindProfileCard);
+  stopPrintersTimer();
+  printersTimer = setInterval(() => renderPrinters(true), 5000);
+}
+
+function bindAgentButtons() {
+  document.querySelectorAll("[data-rename]").forEach((b) => b.addEventListener("click", async () => {
+    const a = state.printers.agents.find((x) => x.id === Number(b.dataset.rename));
+    const res = await confirmModal({ title: "Название компьютера", ok: "Сохранить",
+      html: `<p>Его видят операторы в окне печати.</p><textarea name="reason" rows="1" maxlength="60">${esc(a.name)}</textarea>` });
+    if (!res) return;
+    try { toast((await api(`/api/printers/agents/${a.id}`, { method: "POST", body: { name: res.reason } })).message, "ok"); renderPrinters(); }
+    catch (e) { toast(e.message, "error"); }
+  }));
+  document.querySelectorAll("[data-revoke]").forEach((b) => b.addEventListener("click", async () => {
+    const a = state.printers.agents.find((x) => x.id === Number(b.dataset.revoke));
+    const res = await confirmModal({ title: `Отключить «${a.name}»?`, danger: true, ok: "Отключить",
+      html: "<p>Программа на этом компьютере перестанет получать задания, профили с ним освободятся. Чтобы вернуть — подключите компьютер заново кодом.</p>" });
+    if (!res) return;
+    try { toast((await api(`/api/printers/agents/${a.id}`, { method: "POST", body: { revoke: true } })).message, "ok"); renderPrinters(); }
+    catch (e) { toast(e.message, "error"); }
+  }));
+}
+
+function bindProfileCard(card) {
+  const key = card.dataset.profile;
+  const agentSel = card.querySelector('[data-field="agent"]');
+  const printerSel = card.querySelector('[data-field="printer"]');
+  const save = card.querySelector("[data-save]");
+  const test = card.querySelector("[data-test]");
+  const label = card.querySelector("[data-state]");
+  const changed = () => { save.hidden = false; test.disabled = true; label.className = "hint"; label.textContent = "Есть несохранённые изменения"; };
+  agentSel.addEventListener("change", () => {
+    const a = state.printers.agents.find((x) => x.id === Number(agentSel.value));
+    printerSel.innerHTML = '<option value="">— не выбран —</option>' + (a ? a.printers.map((pr) => `<option>${esc(pr.name)}</option>`).join("") : "");
+    changed();
+  });
+  printerSel.addEventListener("change", changed);
+  save.addEventListener("click", () => withLoading(save, "Сохраняем…", async () => {
+    try {
+      const r = await api(`/api/printers/profiles/${key}`, { method: "PUT", body: { agent_id: agentSel.value || null, printer: printerSel.value || null } });
+      toast(r.message, "ok");
+      renderPrinters();
+    } catch (e) { toast(e.message, "error"); }
+  }));
+  test.addEventListener("click", () => withLoading(test, "Отправляем…", async () => {
+    try {
+      const r = await api(`/api/printers/profiles/${key}/test`, { method: "POST", body: {} });
+      toast(r.message, "ok");
+      const names = { queued: "ждёт компьютер", sent: "компьютер получил", printing: "печатается", done: "напечатан ✓", error: "ошибка", cancelled: "снят" };
+      for (let i = 0; i < 90; i++) {  // следим за пробным листом до 3 минут
+        await new Promise((res) => setTimeout(res, 2000));
+        const j = await api(`/api/printers/jobs/${r.job_id}`).catch(() => null);
+        if (!j || !label.isConnected) return;
+        label.textContent = `Пробный лист: ${names[j.state] || j.state}${j.detail ? " — " + j.detail : ""}`;
+        label.className = j.state === "done" ? "saved" : (j.state === "error" || j.problem) ? "hint pr-bad" : "hint";
+        if (["done", "error", "cancelled"].includes(j.state)) return;
+      }
+    } catch (e) { toast(e.message, "error"); }
+  }));
+}
+
+async function pairModal() {
+  let code;
+  try { code = await api("/api/printers/pair-code", { method: "POST", body: {} }); }
+  catch (e) { toast(e.message, "error"); return; }
+  const before = new Set((state.printers?.agents || []).map((a) => a.id));
+  const wrap = document.createElement("div");
+  wrap.className = "modal-wrap";
+  const deadline = Date.now() + code.expires_in * 1000;
+  wrap.innerHTML = `<div class="modal" role="dialog" aria-modal="true">
+    <h3>Подключить компьютер с принтером</h3>
+    <ol class="pair-steps">
+      <li>${state.printers?.download ? 'На компьютере с принтером <a href="/agent/download">скачайте программу «Тюша Печать»</a> и запустите её.' :
+        "Запустите на компьютере с принтером программу «Тюша Печать» (папка agent в репозитории)."}</li>
+      <li>Адрес сервера: <code>${esc(location.origin)}</code></li>
+      <li>Введите код:</li></ol>
+    <div class="pair-code" aria-label="Код подключения">${code.code.slice(0, 3)} ${code.code.slice(3)}</div>
+    <p class="hint" id="pair-state">Код действует <span id="pair-left"></span>. Ждём компьютер…</p>
+    <div class="buttons"><button class="btn" data-close>Закрыть</button></div></div>`;
+  document.body.appendChild(wrap);
+  let timer = null;
+  const close = () => { clearInterval(timer); wrap.remove(); renderPrinters(); };
+  wrap.querySelector("[data-close]").addEventListener("click", close);
+  wrap.addEventListener("click", (e) => { if (e.target === wrap) close(); });
+  let tick = 0;
+  const step = async () => {
+    const left = Math.max(0, Math.round((deadline - Date.now()) / 1000));
+    const el = document.getElementById("pair-left");
+    if (el) el.textContent = left ? `ещё ${Math.floor(left / 60)}:${String(left % 60).padStart(2, "0")}` : "— истёк, закройте окно и получите новый";
+    if (tick++ % 2) return;
+    const d = await api("/api/printers").catch(() => null);
+    const fresh = d?.agents.find((a) => !before.has(a.id));
+    if (fresh) {
+      clearInterval(timer);
+      document.getElementById("pair-state").innerHTML = `<span class="saved">✓ Подключён «${esc(fresh.name)}». Профили можно настроить на странице «Принтеры».</span>`;
+      wrap.querySelector(".pair-code").classList.add("done");
+    }
+  };
+  step();
+  timer = setInterval(step, 1000);
 }
 
 // ---------- старт ----------
