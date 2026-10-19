@@ -18,6 +18,7 @@ from PIL import Image
 import cards
 import config
 import db
+import docs
 import photos
 import pricing
 import service
@@ -29,6 +30,7 @@ MAX_FILE = 20 * 1024 * 1024
 MAX_PIXELS = 60_000_000
 MAX_PHOTOS = {"deck36": 36, "deck54": 54}
 MAX_PHOTO_JOB = 54
+MAX_COPIES_DOC = 20
 MAX_OPEN_ORDERS = 5  # заказов «new» от одного клиента одновременно
 _render_slot = asyncio.Semaphore(1)  # рендер колоды грузит процессор — по одному
 _placing: set[int] = set()
@@ -74,6 +76,9 @@ def _public(o: dict) -> dict:
         deck = cards.DECKS[p["deck"]]
         title, n = deck.title.split(" (")[0], len(cards.deck_cards(deck))
         sub = f"{n} карт · {p['photos']} фото"
+    elif o["kind"] == "doc":
+        title = "Документ"
+        sub = f"{p['doc_pages']} стр. · {p['copies']} коп. · {'цвет' if p['color'] else 'ч/б'}"
     else:
         title = f"Фото {photos.FORMATS[p['format']][0].split(' (')[0].split(' —')[0]}"
         sub = (f"{p['photos']} фото · {p['copies']} коп. · {'цвет' if p['color'] else 'ч/б'} · "
@@ -120,6 +125,42 @@ async def cancel_order(request: web.Request) -> web.Response:
     return web.json_response({"ok": True, "order": _public(service.get(order["id"]))})
 
 
+async def _save_part(part, path, limit: int, what: str) -> None:
+    size = 0
+    with open(path, "wb") as f:
+        while chunk := await part.read_chunk(256 * 1024):
+            size += len(chunk)
+            if size > limit:
+                raise service.ServiceError(f"{what} больше {limit // 1048576} МБ")
+            f.write(chunk)
+
+
+async def inspect_doc(request: web.Request) -> web.Response:
+    """Считает страницы документа, чтобы показать цену до оформления. Файл не сохраняется."""
+    user = _user(request)
+    if user["id"] in _placing:
+        return _fail("Подождите, предыдущий заказ ещё оформляется", 429)
+    tmp = config.SESSIONS_DIR / f"i{user['id']}_{uuid.uuid4().hex[:8]}"
+    try:
+        tmp.mkdir(parents=True)
+        reader = await request.multipart()
+        part = await reader.next()
+        if part is None or part.name != "document":
+            raise service.ServiceError("Файл не получен")
+        await _save_part(part, tmp / "doc", MAX_FILE, "Файл")
+        pages = await asyncio.to_thread(docs.count_pages, tmp / "doc")
+        return web.json_response({"ok": True, "pages": pages})
+    except docs.DocError as e:
+        return _fail(str(e))
+    except service.ServiceError as e:
+        return _fail(str(e))
+    except Exception:
+        log.exception("Не удалось проверить документ")
+        return _fail("Не получилось прочитать файл. Попробуйте сохранить его как PDF", 500)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 def _check_image(path) -> None:
     with Image.open(path) as im:
         if im.format not in ("JPEG", "PNG"):
@@ -145,6 +186,12 @@ async def create_order(request: web.Request) -> web.Response:
         while (part := await reader.next()) is not None:
             if part.name == "meta":
                 meta = json.loads(await part.text())
+            elif part.name == "document":
+                if files:
+                    raise service.ServiceError("Документ можно загрузить только один")
+                path = session_dir / "document"
+                await _save_part(part, path, MAX_FILE, "Файл")
+                files.append(path)
             elif part.name == "photo":
                 if len(files) >= MAX_PHOTO_JOB:
                     raise service.ServiceError(f"Не больше {MAX_PHOTO_JOB} фото")
@@ -159,10 +206,10 @@ async def create_order(request: web.Request) -> web.Response:
                 files.append(path)
         if not isinstance(meta, dict) or not files:
             raise service.ServiceError("Добавьте хотя бы одно фото")
-        for path in files:
-            _check_image(path)
-
         kind = meta.get("kind")
+        if kind != "doc":
+            for path in files:
+                _check_image(path)
         if kind == "cards":
             deck = meta.get("deck")
             if deck not in cards.DECKS:
@@ -176,6 +223,14 @@ async def create_order(request: web.Request) -> web.Response:
             if fmt not in photos.FORMATS or quality not in service.QUALITY_TITLES or not 1 <= copies <= 20:
                 raise service.ServiceError("Неверные параметры печати")
             params = {"format": fmt, "copies": copies, "color": bool(meta.get("color", True)), "quality": quality}
+        elif kind == "doc":
+            copies = int(meta.get("copies", 1))
+            if not 1 <= copies <= MAX_COPIES_DOC:
+                raise service.ServiceError("Неверные параметры печати")
+            params = {"copies": copies, "color": bool(meta.get("color", True)), "quality": "normal"}
+            params["doc_pages"] = await asyncio.to_thread(docs.count_pages, files[0])
+            if params["doc_pages"] * copies > docs.MAX_SHEETS:
+                raise service.ServiceError(f"Не больше {docs.MAX_SHEETS} листов в заказе — уменьшите число копий")
         else:
             raise service.ServiceError("Неизвестный тип заказа")
 
@@ -185,12 +240,17 @@ async def create_order(request: web.Request) -> web.Response:
                 pages = await asyncio.to_thread(cards.build_deck, cards.DECKS[params["deck"]], files, out)
                 params.update(sheets=len(pages) // 2, color=True, quality="high")
                 previews = [pages[0], pages[len(pages) // 2]]
+            elif kind == "doc":
+                once = await asyncio.to_thread(docs.build_doc_pages, files[0], not params["color"], out)
+                pages = once * params["copies"]  # копии по порядку: весь документ, потом снова
+                params["sheets"] = len(pages)
+                previews = once[:2]
             else:
                 pages = await asyncio.to_thread(photos.build_photo_pages, files, params["format"],
                                                 params["copies"], not params["color"], out)
                 params["sheets"] = len(pages)
                 previews = pages[:2]
-            params["photos"] = len(files)
+            params["photos"] = len(files) if kind != "doc" else 0
             preview_files = [await asyncio.to_thread(cards.make_preview, p, session_dir / f"preview_{i}.jpg")
                              for i, p in enumerate(previews)]
         amount, _ = pricing.quote(kind, params)
@@ -202,11 +262,11 @@ async def create_order(request: web.Request) -> web.Response:
         return web.json_response({"ok": True, "order": _public(order)})
     except (json.JSONDecodeError, TypeError, ValueError):
         return _fail("Неверные данные заказа")
-    except service.ServiceError as e:
+    except (service.ServiceError, docs.DocError) as e:
         return _fail(str(e))
     except Exception:
         log.exception("Заказ из Mini App не оформился")
-        return _fail("Не получилось собрать макет. Попробуйте другие фото.", 500)
+        return _fail("Не получилось собрать макет. Попробуйте другие фото или файл.", 500)
     finally:
         _placing.discard(uid)
         shutil.rmtree(session_dir, ignore_errors=True)
@@ -214,6 +274,6 @@ async def create_order(request: web.Request) -> web.Response:
 
 def routes() -> list:
     return [web.get("/mapi/config", get_config), web.get("/mapi/orders", list_orders),
-            web.post("/mapi/orders", create_order),
+            web.post("/mapi/orders", create_order), web.post("/mapi/doc/inspect", inspect_doc),
             web.get(r"/mapi/orders/{id:\d+}/thumb", order_thumb),
             web.post(r"/mapi/orders/{id:\d+}/cancel", cancel_order)]

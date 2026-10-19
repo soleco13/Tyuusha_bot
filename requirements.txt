@@ -2,3 +2,4 @@ aiogram>=3.13,<4
 pillow>=10.4
 python-dotenv>=1.0
 pywin32>=306; sys_platform == "win32"
+pymupdf>=1.24

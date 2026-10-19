@@ -71,6 +71,9 @@ def describe(kind: str, p: dict) -> str:
         deck = cards.DECKS[p["deck"]]
         return (f"🃏 {deck.title}\nФото: {p['photos']} шт.\n"
                 f"Листов A4: {p['sheets']} лицевых + {p['sheets']} рубашек\nПечать: цветная, высокое качество")
+    if kind == "doc":
+        return (f"📄 Документ: {p['doc_pages']} стр. × {p['copies']} коп.\n"
+                f"Печать: {'цветная' if p['color'] else 'чёрно-белая'}\nЛистов A4: {p['sheets']}")
     return (f"🖼 Фото: {p['photos']} шт. × {p['copies']} коп.\n"
             f"Формат: {photos.FORMATS[p['format']][0]}\n"
             f"Цвет: {'цветная' if p['color'] else 'чёрно-белая'}, качество: {QUALITY_TITLES[p['quality']].lower()}\n"
@@ -81,6 +84,8 @@ def short_title(order: dict) -> str:
     p = order["params"]
     if order["kind"] == "cards":
         return f"Карты, {len(cards.deck_cards(cards.DECKS[p['deck']]))} шт."
+    if order["kind"] == "doc":
+        return f"Документ, {p['doc_pages']} стр. × {p['copies']}"
     return f"Фото {photos.FORMATS[p['format']][0].split(' (')[0]}, {p['photos'] * p['copies']} отп."
 
 
@@ -140,7 +145,7 @@ async def start_print(order_id: int, part: str, actor: str = "admin") -> dict:
         if order["kind"] == "cards":
             half = len(pages) // 2
             pages = pages[half:] if part == "back" else pages[:half]
-        what = "рубашек" if part == "back" else ("лицевых сторон" if order["kind"] == "cards" else "фото")
+        what = "рубашек" if part == "back" else ("лицевых сторон" if order["kind"] == "cards" else "документа" if order["kind"] == "doc" else "фото")
         order = db.transition(order_id, (prev,), status="printing", print_state="Отправляем на принтер…",
                               print_job={"part": part, "prev": prev}, last_error=None)
         again = part == "front" and prev in ("printed", "issued", "fronts_printed")
