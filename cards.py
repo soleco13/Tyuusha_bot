@@ -369,6 +369,100 @@ def save_back_previews(folder: Path, width: int = 240) -> list[Path]:
     return out
 
 
+# ---------- оформление «Фото на всю карту» ----------
+# Фото занимает всю карту, в левом верхнем углу — маленький минималистичный индекс (ранг над мастью),
+# только чёрный или белый. Пики и трефы — чёрным, черви и бубны — белым. Фото раскладываются так,
+# чтобы под чёрным индексом было светлое место, а под белым — тёмное.
+
+STYLES = {"classic": "Классическая", "full": "Фото на всю карту"}
+DEFAULT_STYLE = "classic"
+
+FULL_INDEX_BOX = (0, 0, mm(17), mm(23))   # угол, где стоит индекс: по нему меряем яркость фото
+INK_BLACK, INK_WHITE = (16, 16, 20), (255, 255, 255)
+
+
+def serif_regular(size: int):
+    return _font(("PTSerif-Regular.ttf", "georgia.ttf", "DejaVuSerif.ttf"), size)
+
+
+def ink_for(card: Card) -> str | None:
+    """Цвет индекса по масти; у джокера — подбирается по фото."""
+    if card.suit in ("spades", "clubs"):
+        return "black"
+    if card.suit in ("hearts", "diamonds"):
+        return "white"
+    return None
+
+
+def fit_full(photo: Image.Image) -> Image.Image:
+    return ImageOps.fit(photo, (CARD_W, CARD_H), Image.LANCZOS, centering=(0.5, 0.45))
+
+
+def corner_luminance(fitted: Image.Image) -> float:
+    """Средняя яркость угла под индексом, 0 — чёрный, 1 — белый."""
+    corner = fitted.crop(FULL_INDEX_BOX).convert("L")
+    hist = corner.histogram()
+    total = sum(hist) or 1
+    return sum(i * n for i, n in enumerate(hist)) / total / 255
+
+
+def assign_by_light(deck: list[Card], lums: list[float]) -> list[int]:
+    """Какое фото на какой карте. Каждое фото используется почти одинаково часто;
+    самые светлые варианты уходят чёрным мастям, самые тёмные — белым, джокерам — середина."""
+    n, p = len(deck), len(lums)
+    base, extra = divmod(n, p)
+    # «лишние» использования достаются фото с самым явным светом или тенью — их проще всего поставить удачно
+    decisive = set(sorted(range(p), key=lambda i: -abs(lums[i] - 0.5))[:extra])
+    slots = []
+    for i in range(p):
+        slots += [i] * (base + (1 if i in decisive else 0))
+    slots.sort(key=lambda i: -lums[i])  # от светлых к тёмным
+    black = [k for k, c in enumerate(deck) if ink_for(c) == "black"]
+    white = [k for k, c in enumerate(deck) if ink_for(c) == "white"]
+    other = [k for k, c in enumerate(deck) if ink_for(c) is None]
+    groups = [(black, slots[:len(black)]),
+              (other, slots[len(black):len(black) + len(other)]),
+              (white, slots[len(black) + len(other):])]
+    result = [0] * n
+    for cards_idx, group_slots in groups:
+        # внутри группы разносим повторы: сначала каждое фото по разу, потом по второму кругу и т. д.
+        seen: dict[int, int] = {}
+        keyed = []
+        for i in group_slots:
+            keyed.append((seen.get(i, 0), -lums[i], i))
+            seen[i] = seen.get(i, 0) + 1
+        for k, (_, _, i) in zip(cards_idx, sorted(keyed)):
+            result[k] = i
+    return result
+
+
+def _full_index(card: Card, ink: tuple) -> Image.Image:
+    """Ранг над мастью, по центру друг под другом — тонкий засечный шрифт и небольшая масть."""
+    rank = "J" if card.suit is None else card.rank
+    layer = Image.new("RGBA", (mm(12), mm(16)), (0, 0, 0, 0))
+    d = ImageDraw.Draw(layer)
+    f = serif_regular(mm(7.4) if len(rank) == 1 else mm(6.4))
+    cx = layer.width // 2
+    d.text((cx, mm(0.2)), rank, font=f, fill=ink, anchor="mt")
+    suit = suit_image(card.suit or "joker", mm(4.3), ink)
+    top = mm(0.2) + (d.textbbox((cx, mm(0.2)), rank, font=f, anchor="mt")[3] - mm(0.2)) + mm(1.1)
+    layer.alpha_composite(suit, (cx - suit.width // 2, round(top)))
+    return layer
+
+
+def render_card_full(card: Card, fitted: Image.Image, lum: float) -> Image.Image:
+    ink_name = ink_for(card) or ("black" if lum >= 0.5 else "white")
+    ink = INK_BLACK if ink_name == "black" else INK_WHITE
+    img = fitted.convert("RGBA")
+    # знак чистый, без теней и подложек: контраст обеспечивает раскладка фото (assign_by_light)
+    img.alpha_composite(_full_index(card, ink), (mm(3.2), mm(3.0)))
+    return img.convert("RGB")
+
+
+def style_title(key: str | None) -> str:
+    return STYLES.get(key or DEFAULT_STYLE, STYLES[DEFAULT_STYLE])
+
+
 # ---------- раскладка на листы ----------
 
 def _grid_origin() -> tuple[int, int]:
@@ -428,13 +522,19 @@ def layout_sheet(cards: list[Image.Image], mirror: bool = False, bleed: int = 0)
 
 
 def build_deck(template: DeckTemplate, photo_paths: list[Path], out_dir: Path,
-               with_backs: bool = True, back: str = DEFAULT_BACK) -> list[Path]:
+               with_backs: bool = True, back: str = DEFAULT_BACK, style: str = DEFAULT_STYLE) -> list[Path]:
     """Рендерит всю колоду. Фото распределяются по картам по кругу.
     Возвращает пути к листам в порядке печати: сначала все лицевые, затем рубашки."""
     out_dir.mkdir(parents=True, exist_ok=True)
     photos = [load_photo(p) for p in photo_paths]
     cards = deck_cards(template)
-    faces = [render_card(card, photos[i % len(photos)]) for i, card in enumerate(cards)]
+    if style == "full":  # фото на всю карту: раскладываем по свету в углу под индексом
+        fitted = [fit_full(ph) for ph in photos]
+        lums = [corner_luminance(f) for f in fitted]
+        order = assign_by_light(cards, lums)
+        faces = [render_card_full(card, fitted[k], lums[k]) for card, k in zip(cards, order)]
+    else:
+        faces = [render_card(card, photos[i % len(photos)]) for i, card in enumerate(cards)]
 
     paths: list[Path] = []
     for s in range(0, len(faces), PER_SHEET):

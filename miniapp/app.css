@@ -647,3 +647,24 @@ input[type="range"] { width: 100%; accent-color: var(--blue); }
 .back-opt .pc { width: 100%; aspect-ratio: 63 / 88; transition: transform .35s var(--spring), box-shadow .2s; }
 .back-opt.on { color: var(--text); }
 .back-opt.on .pc { transform: translateY(-3px); box-shadow: 0 0 0 3px var(--blue), 0 10px 20px -10px color-mix(in srgb, var(--blue) 70%, transparent); }
+
+/* оформление «фото на всю карту»: маленький тонкий индекс, только чёрный или белый */
+.pc.full .bg { position: absolute; inset: 0; background-size: cover; background-position: 50% 45%; }
+.pc.full .fix { position: absolute; left: 5.1%; top: 3.4%; width: 15.9%; display: flex; flex-direction: column; align-items: center; line-height: 1; }
+.pc.full .fix span { font: 400 11.7cqw/.95 "PT Serif", Georgia, "Times New Roman", serif; }
+.pc.full .fix.two span { font-size: 10.1cqw; letter-spacing: -.03em; }
+.pc.full .fix b { font: 400 9.8cqw/.8 "Segoe UI Symbol", "Apple Symbols", "Noto Sans Symbols 2", sans-serif; margin-top: 1cqw; }
+.pc.full.ink-black { color: #101014; }
+.pc.full.ink-white { color: #fff; }
+
+/* выбор оформления в конструкторе */
+.styles { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.style-opt { display: flex; flex-direction: column; gap: 4px; padding: 12px; border-radius: 18px; background: var(--surface);
+  box-shadow: var(--card-shadow); text-align: left; transition: box-shadow .2s, transform .3s var(--spring); min-width: 0; }
+.style-opt.on { box-shadow: 0 0 0 2.5px var(--blue), var(--card-shadow); }
+.style-opt .style-cards { position: relative; height: 96px; margin-bottom: 6px; }
+.style-opt .style-cards .pc { position: absolute; top: 4px; width: 56px; aspect-ratio: 63 / 88; }
+.style-opt .style-cards .pc:first-child { left: 8%; transform: rotate(-7deg); }
+.style-opt .style-cards .pc:last-child { left: 38%; transform: rotate(6deg); }
+.style-opt .t { font-weight: 650; font-size: 14px; }
+.style-opt .s { font-size: 12px; color: var(--muted); line-height: 1.3; }

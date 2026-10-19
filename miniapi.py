@@ -103,7 +103,9 @@ async def get_config(request: web.Request) -> web.Response:
     _user(request)
     return web.json_response({"ok": True, "prices": pricing.get_prices(), "max_photos": MAX_PHOTOS,
                               "max_photo_job": MAX_PHOTO_JOB, "default_back": cards.DEFAULT_BACK,
-                              "backs": [{"key": k, "title": t} for k, (t, _) in cards.BACKS.items()]})
+                              "backs": [{"key": k, "title": t} for k, (t, _) in cards.BACKS.items()],
+                              "styles": [{"key": k, "title": t} for k, t in cards.STYLES.items()],
+                              "default_style": cards.DEFAULT_STYLE})
 
 
 async def list_orders(request: web.Request) -> web.Response:
@@ -220,7 +222,10 @@ async def create_order(request: web.Request) -> web.Response:
             back = meta.get("back") or cards.DEFAULT_BACK
             if back not in cards.BACKS:
                 raise service.ServiceError("Неизвестная рубашка")
-            params = {"deck": deck, "back": back}
+            style = meta.get("style") or cards.DEFAULT_STYLE
+            if style not in cards.STYLES:
+                raise service.ServiceError("Неизвестное оформление карт")
+            params = {"deck": deck, "back": back, "style": style}
         elif kind == "photo":
             fmt, copies = meta.get("format"), int(meta.get("copies", 1))
             quality = meta.get("quality", "high")
@@ -242,7 +247,7 @@ async def create_order(request: web.Request) -> web.Response:
         async with _render_slot:
             if kind == "cards":
                 pages = await asyncio.to_thread(cards.build_deck, cards.DECKS[params["deck"]], files, out,
-                                                back=params["back"])
+                                                back=params["back"], style=params["style"])
                 params.update(sheets=len(pages) // 2, color=True, quality="high")
                 previews = [pages[0], pages[len(pages) // 2]]
             elif kind == "doc":

@@ -40,6 +40,11 @@ let BACKS = [{ key: "hearts", title: "Сердечки" }, { key: "plaid", title
 let DEFAULT_BACK = "hearts";
 const backTitle = (key) => (BACKS.find((b) => b.key === key) || BACKS[0]).title;
 
+// Оформление лицевой стороны: классическое или фото на всю карту с маленьким ч/б индексом
+let STYLES = [{ key: "classic", title: "Классическая" }, { key: "full", title: "Фото на всю карту" }];
+let DEFAULT_STYLE = "classic";
+const styleTitle = (key) => (STYLES.find((s) => s.key === key) || STYLES[0]).title;
+
 const STATUS = {
   new: ["Принят, ждёт печати", "check", ""],
   printing: ["Печатается", "printer", ""],
@@ -132,8 +137,14 @@ function photoStyle(ph) {
 // ---------- игральная карта ----------
 
 // Карта как в печати: крупный засечный ранг, рядом большая масть, под рангом маленькая; фото с мягкими краями
-function playingCard({ rank, suit, ph, zoom = 1, x = 50, y = 50, cls = "", style = "" }) {
+function playingCard({ rank, suit, ph, zoom = 1, x = 50, y = 50, cls = "", style = "", full = false, ink = "black" }) {
   const joker = rank === "JOKER";
+  if (full) {
+    const glyph = joker ? "★\uFE0E" : SUITS[suit][0];
+    const bg = ph ? `background:url('${ph.url}') 50% 45% / cover no-repeat, ${ph.bg || "#e8ecf4"}` : "background:var(--surface-2)";
+    return `<div class="pc full ink-${ink} ${cls}" style="${style}"><div class="bg" style="${bg}"></div>
+      <div class="fix ${(joker ? "J" : rank).length > 1 ? "two" : ""}"><span>${joker ? "J" : rank}</span><b>${glyph}</b></div></div>`;
+  }
   const [glyph, color] = joker ? ["★\uFE0E", "joker"] : SUITS[suit];
   const r = joker ? "J" : rank;
   const bg = ph ? `background:url('${ph.url}') ${x}% ${y}% / ${ph.sample ? Math.round(zoom * 100) + "%" : zoom === 1 ? "cover" : Math.round(zoom * 120) + "%"} no-repeat, ${ph.bg || "#e8ecf4"}` : "background:var(--surface-2)";
@@ -183,10 +194,67 @@ function deckLayout(dk) {
   const ranks = p.id === "deck54" ? RANKS54 : RANKS36;
   SUITS.forEach((_, s) => ranks.forEach((r) => cards.push({ rank: r, suit: s })));
   if (p.id === "deck54") cards.push({ rank: "JOKER" }, { rank: "JOKER" });
+  if (dk.style === "full" && dk.photos.length) {
+    const lums = dk.photos.map((ph) => ph.lum ?? 0.5);
+    const order = assignByLight(cards, lums);
+    return cards.map((c, i) => {
+      const ink = inkFor(c) || (lums[order[i]] >= 0.5 ? "black" : "white");
+      return { ...c, i, o: {}, ph: dk.photos[order[i]], photoIndex: order[i], ink, full: true };
+    });
+  }
   return cards.map((c, i) => {
     const o = dk.edits[i] || {};
     const photoIndex = i % Math.max(dk.photos.length, 1);
     return { ...c, i, o, ph: dk.photos[photoIndex], photoIndex };
+  });
+}
+
+// Та же раскладка, что на сервере (cards.assign_by_light): чёрные масти — на светлые фото, белые — на тёмные
+function inkFor(c) {
+  if (c.rank === "JOKER") return null;
+  return c.suit === 0 || c.suit === 3 ? "black" : "white";
+}
+function assignByLight(deck, lums) {
+  const n = deck.length, p = lums.length;
+  const base = Math.floor(n / p), extra = n % p;
+  const decisive = new Set([...lums.keys()].sort((a, b) => Math.abs(lums[b] - 0.5) - Math.abs(lums[a] - 0.5)).slice(0, extra));
+  const slots = [];
+  lums.forEach((_, i) => { for (let k = 0; k < base + (decisive.has(i) ? 1 : 0); k++) slots.push(i); });
+  slots.sort((a, b) => lums[b] - lums[a]);
+  const idx = (pred) => deck.map((c, k) => (pred(inkFor(c)) ? k : -1)).filter((k) => k >= 0);
+  const black = idx((x) => x === "black"), white = idx((x) => x === "white"), other = idx((x) => x === null);
+  const groups = [[black, slots.slice(0, black.length)], [other, slots.slice(black.length, black.length + other.length)],
+    [white, slots.slice(black.length + other.length)]];
+  const result = new Array(n).fill(0);
+  for (const [cardsIdx, groupSlots] of groups) {
+    const seen = new Map();
+    const keyed = groupSlots.map((i) => { const k = seen.get(i) || 0; seen.set(i, k + 1); return [k, -lums[i], i]; });
+    keyed.sort((a, b) => a[0] - b[0] || a[1] - b[1] || a[2] - b[2]);
+    cardsIdx.forEach((k, j) => { result[k] = keyed[j][2]; });
+  }
+  return result;
+}
+
+// Яркость угла под индексом (как на сервере: фото вписано в карту 63×88, угол 17×23 мм)
+function cornerLuminance(url) {
+  return new Promise((resolve) => {
+    const im = new Image();
+    im.onload = () => {
+      try {
+        const W = 126, H = 176, c = document.createElement("canvas");
+        c.width = W; c.height = H;
+        const k = Math.max(W / im.naturalWidth, H / im.naturalHeight);
+        const w = im.naturalWidth * k, h = im.naturalHeight * k;
+        const ctx = c.getContext("2d", { willReadFrequently: true });
+        ctx.drawImage(im, (W - w) * 0.5, (H - h) * 0.45, w, h);
+        const d = ctx.getImageData(0, 0, Math.round(W * 17 / 63), Math.round(H * 23 / 88)).data;
+        let sum = 0;
+        for (let i = 0; i < d.length; i += 4) sum += 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2];
+        resolve(sum / (d.length / 4) / 255);
+      } catch (e) { resolve(0.5); }
+    };
+    im.onerror = () => resolve(0.5);
+    im.src = url;
   });
 }
 function lowRes(ph) { return ph && Math.min(ph.w, ph.h) < 800; }
@@ -432,12 +500,21 @@ SCREENS.deck = () => {
       ${dk.photos.length < maxPhotos ? `<label class="photo add" aria-label="Добавить фото"><input type="file" id="deck-files" accept="image/jpeg,image/png" multiple data-file="deck">${icon("upload", "lg")}</label>` : ""}</div>
     <div class="small muted">${state.swapFrom != null ? "Теперь нажмите на фото, с которым поменять местами." : "Нажмите на два фото, чтобы поменять их местами. Фото ложатся на карты по очереди."}</div>
     ${bad ? `<div class="notice warn">${icon("warn")}<div><b>${bad} ${plural(bad, "фото", "фото", "фото")} с низким разрешением</b><span>Отмечены значком. На карте 63×88 мм такое фото может выйти нерезким.</span></div></div>` : ""}
+    <div class="h-section"><h2>Оформление</h2></div>
+    <div class="styles" role="radiogroup" aria-label="Оформление карт">${STYLES.map((st) => `<button class="style-opt ${st.key === dk.style ? "on" : ""}" role="radio"
+      aria-checked="${st.key === dk.style}" data-act="set" data-model="deck.style" data-value="${st.key}">
+      <span class="style-cards">${st.key === "full"
+        ? playingCard({ rank: "8", suit: 0, ph: dk.photos[0], full: true, ink: "black" }) + playingCard({ rank: "6", suit: 1, ph: dk.photos[1] || dk.photos[0], full: true, ink: "white", style: "background:#24262c" })
+        : playingCard({ rank: "В", suit: 1, ph: dk.photos[0] }) + playingCard({ rank: "7", suit: 3, ph: dk.photos[1] || dk.photos[0] })}</span>
+      <span class="t">${esc(st.title)}</span>
+      <span class="s">${st.key === "full" ? "Фото до краёв, маленький ч/б знак в углу" : "Фото в центре, ранг и масть в углах"}</span></button>`).join("")}</div>
+    ${dk.style === "full" ? `<div class="small muted">Чёрные масти Тюша ставит на светлые фото, белые — на тёмные, чтобы знак всегда читался.</div>` : ""}
     <div class="h-section"><h2>Рубашка <span class="muted" style="font-weight:500">· ${esc(backTitle(dk.back))}</span></h2></div>
     <div class="backs" role="radiogroup" aria-label="Рубашка карт">${BACKS.map((b) => `<button class="back-opt ${b.key === dk.back ? "on" : ""}" role="radio"
       aria-checked="${b.key === dk.back}" data-act="set" data-model="deck.back" data-value="${b.key}">${cardBack(b.key)}<span>${esc(b.title)}</span></button>`).join("")}</div>
     <div class="h-section"><h2>Макет · ${layout.length} ${plural(layout.length, "карта", "карты", "карт")}</h2></div>
     <div class="deck">${layout.map((c) =>
-      `<div style="display:block;animation:deal .5s var(--spring) both;animation-delay:${Math.min(c.i * 12, 400)}ms">${playingCard({ rank: c.rank, suit: c.suit, ph: c.ph, style: "position:relative;aspect-ratio:63/88" })}</div>`).join("")}</div>`,
+      `<div style="display:block;animation:deal .5s var(--spring) both;animation-delay:${Math.min(c.i * 12, 400)}ms">${playingCard({ rank: c.rank, suit: c.suit, ph: c.ph, full: c.full, ink: c.ink, style: "position:relative;aspect-ratio:63/88" })}</div>`).join("")}</div>`,
     dock: dockBar(quoteDeck(dk).total, "Проверить макет", "review-deck", { disabled: !dk.photos.length }),
   };
 };
@@ -453,11 +530,11 @@ function reviewData() {
     if (bad) warns.push(["warn", `${bad} ${plural(bad, "фото", "фото", "фото")} с низким разрешением`, "Может выйти нерезко. Вернитесь, чтобы заменить, или оставьте как есть."]);
     if (dk.photos.length < p.cards) warns.push(["info", `Фото: ${dk.photos.length} из ${p.cards}`, "Если фото меньше, чем карт, они повторятся по кругу."]);
     return { p, q, title: p.title, flow: ["Фото", "Макет", "Проверка", "Заказ"],
-      rows: [["Набор", p.title], ["Карт", String(p.cards)], ["Фото", String(dk.photos.length)], ["Рубашка", backTitle(dk.back)]],
+      rows: [["Набор", p.title], ["Карт", String(p.cards)], ["Фото", String(dk.photos.length)], ["Оформление", styleTitle(dk.style)], ["Рубашка", backTitle(dk.back)]],
       warns, agree: "Макет проверен. После оформления заказ уйдёт оператору.",
       art: `<div class="row" style="gap:8px;justify-content:center"><div style="width:28%">${cardBack(dk.back, "position:relative;aspect-ratio:63/88")}</div>${deckLayout(dk).slice(0, 2).map((c) => c.memo
         ? `<div class="pc memo" style="width:30%;position:relative"><div class="win" style="${photoStyle(c.ph)};inset:8%"></div></div>`
-        : `<div style="width:28%">${playingCard({ rank: c.rank, suit: c.suit, ph: c.ph, zoom: c.o.zoom || 1, x: c.o.x ?? 50, y: c.o.y ?? 50, style: "position:relative;aspect-ratio:63/88" })}</div>`).join("")}</div>` };
+        : `<div style="width:28%">${playingCard({ rank: c.rank, suit: c.suit, ph: c.ph, full: c.full, ink: c.ink, zoom: c.o.zoom || 1, x: c.o.x ?? 50, y: c.o.y ?? 50, style: "position:relative;aspect-ratio:63/88" })}</div>`).join("")}</div>` };
   }
   if (r.kind === "doc") {
     const d = state.docJob, p = byId("doc"), q = quoteDoc(d);
@@ -790,7 +867,7 @@ const ACT = {
 
 function startDeck(pid, photosCount) {
   if (!state.deck || state.deck.pid !== pid) {
-    state.deck = { pid, photos: [], edits: {}, saved: false, back: DEFAULT_BACK };
+    state.deck = { pid, photos: [], edits: {}, saved: false, back: DEFAULT_BACK, style: DEFAULT_STYLE };
   }
   state.swapFrom = null;
 }
@@ -853,6 +930,7 @@ async function loadConfig() {
     const c = await api("/mapi/config");
     PRICES = c.prices;
     if (Array.isArray(c.backs) && c.backs.length) { BACKS = c.backs; DEFAULT_BACK = c.default_back || BACKS[0].key; }
+    if (Array.isArray(c.styles) && c.styles.length) { STYLES = c.styles; DEFAULT_STYLE = c.default_style || STYLES[0].key; }
     PRODUCTS.forEach((p) => { if (PRICES.cards[p.id]) p.price = PRICES.cards[p.id]; });
     const min = Math.min(...Object.values(PRICES.photo).flatMap((f) => Object.values(f)));
     byId("photo").priceFrom = `от ${min} ₽ за фото`;
@@ -882,7 +960,7 @@ async function placeOrder() {
   const isDeck = r.kind === "deck", isDoc = r.kind === "doc";
   const list = isDoc ? [] : isDeck ? state.deck.photos : state.photoJob.photos;
   const meta = isDoc ? { kind: "doc", copies: state.docJob.copies, color: state.docJob.color }
-    : isDeck ? { kind: "cards", deck: state.deck.pid, back: state.deck.back || DEFAULT_BACK }
+    : isDeck ? { kind: "cards", deck: state.deck.pid, back: state.deck.back || DEFAULT_BACK, style: state.deck.style || DEFAULT_STYLE }
     : { kind: "photo", format: state.photoJob.format, copies: state.photoJob.copies, color: state.photoJob.color, quality: state.photoJob.quality };
   state.placing = true;
   state.uploadPct = 5;
@@ -953,7 +1031,7 @@ async function onPhotoFiles(files, target) {
     if (f.size > 20 * 1048576) { toast(`${f.name}: больше 20 МБ`, "no"); continue; }
     const url = URL.createObjectURL(f);
     const [w, h] = await imageSize(url);
-    const ph = { url, w, h, name: f.name, file: f };
+    const ph = { url, w, h, name: f.name, file: f, lum: target === "deck" ? await cornerLuminance(url) : undefined };
     if (target === "deck") {
       const max = byId(state.deck.pid).cards;
       if (state.deck.photos.length >= max) break;
