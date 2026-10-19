@@ -22,7 +22,7 @@ import config
 import printing
 import service
 import tg
-from tg import kb, send_anim
+from tg import kb
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 log = logging.getLogger("printbot")
@@ -53,10 +53,10 @@ async def lock(cb: CallbackQuery, chosen: str) -> None:
 @dp.message(CommandStart())
 async def start(message: Message) -> None:
     name = html.escape(message.from_user.first_name or "")
-    await send_anim(message.chat.id, "hello",
-                    f"Привет{', ' + name if name else ''}! Я <b>Тюша</b> 🐾\n\n"
-                    "Печатаю ваши фото и делаю настоящие игральные карты с вашими снимками. "
-                    "Всё делается в приложении — нажмите кнопку ниже или «Тюша» слева от поля ввода.", OPEN_APP)
+    await message.answer(
+        f"Привет{', ' + name if name else ''}! Я <b>Тюша</b> 🐾\n\n"
+        "Печатаю ваши фото и делаю настоящие игральные карты с вашими снимками. "
+        "Всё делается в приложении — нажмите кнопку ниже или «Тюша» слева от поля ввода.", reply_markup=OPEN_APP)
 
 
 @dp.message(Command("myid"))
