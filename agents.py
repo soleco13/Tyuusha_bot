@@ -32,6 +32,7 @@ log = logging.getLogger("agents")
 PROFILES = {
     "cards": "Игральные карты (картон 300 г/м²)",
     "photo": "Фото (фотобумага)",
+    "doc": "Документы (обычная бумага)",
 }
 for _key, _title in PROFILES.items():
     db.ensure_profile(_key, _title)
@@ -74,7 +75,7 @@ def wake(agent_id: int) -> None:
 
 
 def profile_key(kind: str) -> str:
-    return "cards" if kind == "cards" else "photo"
+    return kind if kind in ("cards", "doc") else "photo"
 
 
 def _printer_info(agent: dict, printer: str) -> dict | None:

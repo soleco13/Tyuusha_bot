@@ -11,6 +11,8 @@ DEFAULT_PRICES = {
     "photo": {"10x15": {"color": 30, "bw": 20},
               "a5": {"color": 60, "bw": 35},
               "a4": {"color": 100, "bw": 50}},
+    # документы: цена за одну страницу A4
+    "doc": {"color": 15, "bw": 8},
     # надбавка за качество, % к цене
     "quality_markup": {"draft": -20, "normal": 0, "high": 20},
 }
@@ -36,6 +38,9 @@ def set_prices(prices: dict) -> dict:
     for fmt in clean["photo"]:
         for mode in ("color", "bw"):
             clean["photo"][fmt][mode] = _money(prices["photo"][fmt][mode])
+    for mode in ("color", "bw"):
+        if "doc" in prices:
+            clean["doc"][mode] = _money(prices["doc"][mode])
     for q in clean["quality_markup"]:
         v = int(prices["quality_markup"][q])
         if not -90 <= v <= 500:
@@ -58,6 +63,10 @@ def quote(kind: str, params: dict) -> tuple[int, str]:
     if kind == "cards":
         rub = p["cards"][params["deck"]]
         return rub * 100, f"Колода — {rub} ₽"
+    if kind == "doc":
+        unit_k = p["doc"]["color" if params["color"] else "bw"] * 100
+        count = params["doc_pages"] * params["copies"]
+        return unit_k * count, f"{count} стр. × {format_rub(unit_k)}"
     unit = p["photo"][params["format"]]["color" if params["color"] else "bw"]
     markup = p["quality_markup"][params["quality"]]
     unit_k = round(unit * 100 * (100 + markup) / 100)

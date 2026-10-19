@@ -20,12 +20,16 @@ const PRODUCTS = [
   { id: "deck54", cat: "cards", title: "Полная колода", sub: "54 карты с двумя джокерами", price: 1290, cards: 54, art: "full",
     includes: [["cards", "54 карты 63×88 мм"], ["stars", "Два джокера с вашими фото"], ["heart", "Рубашка на выбор: 5 вариантов"]],
     reqs: ["От 1 до 54 фото", "Лучше от 1000 px по короткой стороне", "JPG или PNG до 20 МБ"] },
+  { id: "doc", cat: "doc", title: "Печать документов", sub: "PDF, JPG и PNG на листах A4", priceFrom: "от 8 ₽ за страницу", art: "doc",
+    includes: [["doc", "Каждая страница на отдельном листе A4"], ["tune", "Цветная или чёрно-белая печать"], ["copy", "Нужное число копий"]],
+    reqs: ["PDF, JPG или PNG до 20 МБ, не больше 100 страниц", "Word и Excel сохраните как PDF", "PDF без пароля"] },
   { id: "photo", cat: "photo", title: "Печать фото", sub: "10×15, A5 и A4", priceFrom: "от 20 ₽ за фото", art: "photo" },
 ];
 const byId = (id) => PRODUCTS.find((p) => p.id === id);
 
 let PRICES = {
   cards: { deck36: 990, deck54: 1290 },
+  doc: { color: 15, bw: 8 },
   photo: { "10x15": { color: 30, bw: 20 }, a5: { color: 60, bw: 35 }, a4: { color: 100, bw: 50 } },
   quality_markup: { draft: -20, normal: 0, high: 20 },
 };
@@ -84,6 +88,7 @@ const state = {
   deck: null,          // конструктор карт
   swapFrom: null,
   photoJob: null,      // печать фото
+  docJob: null,        // печать документа
   uploadPct: 0,
   review: null,        // что проверяем перед оформлением
   agreed: false,
@@ -159,6 +164,11 @@ function quotePhoto(j) {
   const rate = photoUnit(j);
   const n = j.photos.length * j.copies;
   return { total: Math.round(n * rate * 100) / 100, lines: [[`${n} ${plural(n, "отпечаток", "отпечатка", "отпечатков")} × ${rub(rate)}`, n * rate]], valid: n > 0 };
+}
+function quoteDoc(j) {
+  const rate = PRICES.doc[j.color ? "color" : "bw"];
+  const n = j.pages * j.copies;
+  return { total: n * rate, lines: [[`${n} ${plural(n, "страница", "страницы", "страниц")} × ${rub(rate)}`, n * rate]], valid: j.pages > 0 && !j.checking };
 }
 function quoteDeck(dk) {
   const p = byId(dk.pid);
@@ -237,6 +247,7 @@ function statusPill(status) {
 }
 function orderThumb(o) {
   if (o.thumbUrl) return `<div class="othumb" style="background:url('${o.thumbUrl}') center / cover"></div>`;
+  if (o.kind === "doc") return `<div class="othumb" style="background:${artBg.doc}">${icon("doc")}</div>`;
   return o.kind === "cards" ? `<div class="othumb" style="background:${artBg.classic}">${icon("cards")}</div>` : `<div class="othumb" style="background:${artBg.photo}">${icon("photo")}</div>`;
 }
 function dockBar(price, label, act, { disabled = false, sub = "Итого", go = "" } = {}) {
@@ -257,6 +268,7 @@ SCREENS.home = () => {
   const draftP = byId(state.draft?.pid);
   const svc = [
     { t: "Фото", s: "от 20 ₽", ic: "photo", go: "photo", p: byId("photo") },
+    { t: "Документы", s: "от 8 ₽", ic: "doc", go: "doc" },
     { t: "Свои карты", s: "от 990 ₽", ic: "cards", go: "catalog-cards", p: null, tone: "pink" },
   ];
   return { html: `
@@ -268,7 +280,7 @@ SCREENS.home = () => {
       <div class="copy">
         <span class="eyebrow" style="color:var(--hero-muted)">${hello}${state.user.name ? ", " + esc(state.user.name) : ""}</span>
         <h1 class="display">Что напечатаем сегодня?</h1>
-        <p>Фото и колоды игральных карт из ваших снимков.</p>
+        <p>Фото, документы и колоды игральных карт.</p>
       </div>
       <span class="bubble">Привет!</span>
       <div class="mascot" aria-hidden="true"><img src="${IMG.waveBody}" alt=""><img class="paw" src="${IMG.wavePaw}" alt=""></div>
@@ -313,7 +325,7 @@ function productCard(p) {
 }
 
 SCREENS.catalog = () => {
-  const cats = [["all", "Все"], ["cards", "Карты"], ["photo", "Фото"]];
+  const cats = [["all", "Все"], ["cards", "Карты"], ["photo", "Фото"], ["doc", "Документы"]];
   const q = state.q.trim().toLowerCase();
   const list = PRODUCTS.filter((p) => (state.catCat === "all" || p.cat === state.catCat) &&
     (!q || (p.title + " " + p.sub).toLowerCase().includes(q)));
@@ -331,7 +343,7 @@ SCREENS.product = ({ id }) => {
   const p = byId(id);
   const a = availability(p);
   const isCards = p.cat === "cards";
-  const cta = isCards ? ["Собрать колоду", "start-deck"] : ["Выбрать фото", "go-photo"];
+  const cta = isCards ? ["Собрать колоду", "start-deck"] : p.cat === "doc" ? ["Выбрать файл", "go-doc"] : ["Выбрать фото", "go-photo"];
   return {
     html: `${topbar(p.title)}
     <div class="card" style="padding:0;overflow:hidden"><div class="product" style="box-shadow:none;border-radius:0">
@@ -343,7 +355,7 @@ SCREENS.product = ({ id }) => {
       </div></div>
     ${p.includes ? `<div class="card"><div class="eyebrow">Что входит</div><div class="list">${p.includes.map(([ic, t]) =>
       `<div class="list-item"><span class="tile-icon">${icon(ic)}</span><span class="t">${esc(t)}</span></div>`).join("")}</div></div>` : ""}
-    ${p.reqs ? `<div class="card"><div class="eyebrow">Требования к фото</div><div class="list">${p.reqs.map((t) =>
+    ${p.reqs ? `<div class="card"><div class="eyebrow">${p.cat === "doc" ? "Требования к файлу" : "Требования к фото"}</div><div class="list">${p.reqs.map((t) =>
       `<div class="list-item"><span style="color:var(--ok);--ic2:var(--ok)">${icon("check", "sm")}</span><span>${esc(t)}</span></div>`).join("")}</div></div>` : ""}
     <div class="card flat"><div class="row"><span class="tile-icon">${icon("clock")}</span><div class="grow"><div style="font-weight:600">Печатаем после заказа</div>
       <div class="small muted">Напишем в Telegram, когда заказ будет готов.</div></div></div></div>`,
@@ -370,6 +382,35 @@ SCREENS.photo = () => {
       <div class="stepper"><button data-act="step" data-model="photoJob.copies" data-d="-1" aria-label="Меньше">${icon("minus")}</button><output class="tabular">${j.copies}</output>
       <button data-act="step" data-model="photoJob.copies" data-d="1" aria-label="Больше">${icon("plus")}</button></div></div></div>`,
     dock: dockBar(q.total, "Проверить заказ", "review-photo", { disabled: !q.valid }),
+  };
+};
+
+// --- печать документа ---
+
+SCREENS.doc = () => {
+  const j = state.docJob;
+  const q = quoteDoc(j);
+  const body = j.checking
+    ? `<div class="notice info">${icon("clock")}<div><b>Читаем файл…</b><span>Считаем страницы, чтобы показать цену.</span></div></div>`
+    : j.pages
+      ? `<div class="card"><div class="row"><span class="tile-icon">${icon("doc")}</span>
+          <div class="grow"><div style="font-weight:650;overflow-wrap:anywhere">${esc(j.name)}</div>
+            <div class="small muted">${j.pages} ${plural(j.pages, "страница", "страницы", "страниц")}</div></div>
+          <label class="btn soft sm" style="position:relative;overflow:hidden">Заменить<input type="file" data-file="doc" accept="application/pdf,image/jpeg,image/png" style="position:absolute;inset:0;opacity:0"></label></div></div>`
+      : `<label class="photo add" style="aspect-ratio:auto;padding:28px 12px;flex-direction:column;gap:8px;text-align:center">
+          <input type="file" data-file="doc" accept="application/pdf,image/jpeg,image/png">${icon("upload", "lg")}
+          <b>Выбрать файл</b><span class="small muted">PDF, JPG или PNG, до 20 МБ</span></label>`;
+  return {
+    html: `${topbar("Печать документа")}
+    ${steps(["Файл", "Настройки", "Проверка", "Заказ"], j.pages ? 1 : 0)}
+    ${body}
+    ${j.error ? `<div class="notice warn">${icon("warn")}<div><b>Файл не подошёл</b><span>${esc(j.error)}</span></div></div>` : ""}
+    <div class="field"><span class="lbl">Цвет</span>${seg("docJob.color", String(j.color), [
+      { v: "true", t: "Цветная", s: rub(PRICES.doc.color) + " / стр." }, { v: "false", t: "Чёрно-белая", s: rub(PRICES.doc.bw) + " / стр." }])}</div>
+    <div class="field"><div class="row" style="justify-content:space-between"><div><span class="lbl">Копии документа</span></div>
+      <div class="stepper"><button data-act="step" data-model="docJob.copies" data-d="-1" aria-label="Меньше">${icon("minus")}</button><output class="tabular">${j.copies}</output>
+      <button data-act="step" data-model="docJob.copies" data-d="1" aria-label="Больше">${icon("plus")}</button></div></div></div>`,
+    dock: dockBar(q.total, "Проверить заказ", "review-doc", { disabled: !q.valid }),
   };
 };
 
@@ -417,6 +458,13 @@ function reviewData() {
       art: `<div class="row" style="gap:8px;justify-content:center"><div style="width:28%">${cardBack(dk.back, "position:relative;aspect-ratio:63/88")}</div>${deckLayout(dk).slice(0, 2).map((c) => c.memo
         ? `<div class="pc memo" style="width:30%;position:relative"><div class="win" style="${photoStyle(c.ph)};inset:8%"></div></div>`
         : `<div style="width:28%">${playingCard({ rank: c.rank, suit: c.suit, ph: c.ph, zoom: c.o.zoom || 1, x: c.o.x ?? 50, y: c.o.y ?? 50, style: "position:relative;aspect-ratio:63/88" })}</div>`).join("")}</div>` };
+  }
+  if (r.kind === "doc") {
+    const d = state.docJob, p = byId("doc"), q = quoteDoc(d);
+    return { p, q, title: "Документ", flow: ["Файл", "Настройки", "Проверка", "Заказ"],
+      rows: [["Файл", d.name], ["Страниц", String(d.pages)], ["Копии", String(d.copies)], ["Цвет", d.color ? "цветная" : "чёрно-белая"]],
+      warns: [["info", "Листы A4", "Страницы вписываются в лист с небольшими полями; альбомные поворачиваем."]],
+      agree: "Файл и параметры печати проверены." };
   }
   const j = state.photoJob, p = byId("photo"), q = quotePhoto(j);
   const bad = j.photos.filter(lowRes).length;
@@ -671,7 +719,7 @@ const ACT = {
   set: (el) => {
     setPath(el.dataset.model, el.dataset.value);
     if (el.dataset.model === "theme") { store("theme", state.theme); applyTheme(); }
-    if (el.dataset.model.startsWith("photoJob.")) state.agreed = false;
+    if (/^(photoJob|docJob)\./.test(el.dataset.model)) state.agreed = false;
     haptic("select");
     render();
   },
@@ -685,6 +733,8 @@ const ACT = {
   "cards-catalog": () => { state.tab = "catalog"; state.catCat = "cards"; state.stack = []; render("tab"); window.scrollTo(0, 0); },
   "clear-search": () => { state.q = ""; state.catCat = "all"; render(); },
   "go-photo": () => { state.photoJob = state.photoJob || { photos: [], format: "10x15", copies: 1, color: true, quality: "high" }; push("photo"); },
+  "go-doc": () => { state.docJob = state.docJob || { file: null, name: "", pages: 0, copies: 1, color: false, checking: false, error: "" }; push("doc"); },
+  "review-doc": () => { state.review = { kind: "doc" }; state.agreed = false; push("review"); },
   "start-deck": () => { const id = current().params.id; startDeck(id); push("deck"); },
   "continue-draft": () => { startDeck(state.draft.pid, state.draft.photos); push("deck"); },
   swap: (el) => {
@@ -728,8 +778,9 @@ const ACT = {
   repeat: (el) => {
     const o = state.orders.find((x) => x.id === +el.dataset.id);
     if (o.kind === "cards") { startDeck(o.title.includes("36") || o.sub.startsWith("36") ? "deck36" : "deck54"); push("deck"); }
+    else if (o.kind === "doc") ACT["go-doc"]();
     else ACT["go-photo"]();
-    toast("Добавьте фото — это будет новый заказ");
+    toast(o.kind === "doc" ? "Выберите файл — это будет новый заказ" : "Добавьте фото — это будет новый заказ");
   },
   copy: async (el) => {
     try { await navigator.clipboard.writeText(el.dataset.text); toast("Адрес скопирован"); }
@@ -805,6 +856,7 @@ async function loadConfig() {
     PRODUCTS.forEach((p) => { if (PRICES.cards[p.id]) p.price = PRICES.cards[p.id]; });
     const min = Math.min(...Object.values(PRICES.photo).flatMap((f) => Object.values(f)));
     byId("photo").priceFrom = `от ${min} ₽ за фото`;
+    byId("doc").priceFrom = `от ${Math.min(PRICES.doc.color, PRICES.doc.bw)} ₽ за страницу`;
     render();
   } catch (e) { /* остаются цены по умолчанию */ }
 }
@@ -827,9 +879,10 @@ async function prepareUpload(ph, maxSide) {
 async function placeOrder() {
   if (state.placing) return;
   const r = state.review;
-  const isDeck = r.kind === "deck";
-  const list = isDeck ? state.deck.photos : state.photoJob.photos;
-  const meta = isDeck ? { kind: "cards", deck: state.deck.pid, back: state.deck.back || DEFAULT_BACK }
+  const isDeck = r.kind === "deck", isDoc = r.kind === "doc";
+  const list = isDoc ? [] : isDeck ? state.deck.photos : state.photoJob.photos;
+  const meta = isDoc ? { kind: "doc", copies: state.docJob.copies, color: state.docJob.color }
+    : isDeck ? { kind: "cards", deck: state.deck.pid, back: state.deck.back || DEFAULT_BACK }
     : { kind: "photo", format: state.photoJob.format, copies: state.photoJob.copies, color: state.photoJob.color, quality: state.photoJob.quality };
   state.placing = true;
   state.uploadPct = 5;
@@ -838,6 +891,7 @@ async function placeOrder() {
   try {
     const form = new FormData();
     form.append("meta", JSON.stringify(meta));
+    if (isDoc) form.append("document", state.docJob.file, state.docJob.name);
     const maxSide = isDeck ? 2200 : 3600;
     for (let i = 0; i < list.length; i++) {
       form.append("photo", await prepareUpload(list[i], maxSide), `photo_${i + 1}.jpg`);
@@ -850,7 +904,7 @@ async function placeOrder() {
     const o = mapOrder(order);
     state.orders.unshift(o);
     loadThumb(o).then(() => render());
-    if (isDeck) { state.draft = null; state.deck = null; } else state.photoJob = null;
+    if (isDoc) state.docJob = null; else if (isDeck) { state.draft = null; state.deck = null; } else state.photoJob = null;
     state.agreed = false;
     state.stack = [{ name: "success", params: { id: o.id } }];
     haptic("success");
@@ -872,7 +926,27 @@ async function placeOrder() {
 function imageSize(url) {
   return new Promise((resolve) => { const im = new Image(); im.onload = () => resolve([im.naturalWidth, im.naturalHeight]); im.onerror = () => resolve([0, 0]); im.src = url; });
 }
+async function onDocFile(file) {
+  const j = state.docJob;
+  if (!/^(application\/pdf|image\/(jpeg|png))$/.test(file.type) && !/\.(pdf|jpe?g|png)$/i.test(file.name)) {
+    j.error = "Принимаем PDF, JPG и PNG. Word и Excel сохраните как PDF."; render(); return;
+  }
+  if (file.size > 20 * 1048576) { j.error = "Файл больше 20 МБ."; render(); return; }
+  Object.assign(j, { checking: true, error: "" });
+  render();
+  try {
+    const form = new FormData();
+    form.append("document", file, file.name);
+    const { pages } = await api("/mapi/doc/inspect", { method: "POST", body: form });
+    Object.assign(j, { file, name: file.name, pages });
+    haptic("success");
+  } catch (e) { Object.assign(j, { file: null, name: "", pages: 0, error: e.message }); haptic("error"); }
+  j.checking = false;
+  state.agreed = false;
+  render();
+}
 async function onPhotoFiles(files, target) {
+  if (target === "doc") return onDocFile(files[0]);
   const list = [...files].filter((f) => /image\/(jpeg|png)/.test(f.type));
   if (list.length < files.length) toast("Часть файлов пропущена: принимаем JPG и PNG", "no");
   for (const f of list) {
@@ -900,6 +974,7 @@ document.addEventListener("click", (e) => {
   if (el.dataset.go) {
     const { go, act, ...params } = el.dataset;
     if (go === "photo") return ACT["go-photo"]();
+    if (go === "doc") return ACT["go-doc"]();
     return push(go, params);
   }
   ACT[el.dataset.act]?.(el, e);

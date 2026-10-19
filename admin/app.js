@@ -361,7 +361,7 @@ function renderList() {
 /** Куда уйдёт задание при печати через компьютер с принтером. */
 function routeNote(o) {
   if (state.summary?.print_mode !== "agent") return "";
-  const prof = state.summary.profiles?.[o.kind === "cards" ? "cards" : "photo"];
+  const prof = state.summary.profiles?.[["cards", "doc"].includes(o.kind) ? o.kind : "photo"];
   if (!prof?.agent || !prof?.printer) {
     return `<div class="banner error" style="margin-bottom:10px">⚠️ <div>Для этого материала не выбран принтер<div class="small">Откройте «Принтеры» и настройте профиль.</div></div></div>`;
   }
@@ -383,7 +383,7 @@ const ACTIONS = {
       return {
         title: `Печать заказа №${o.id}`,
         html: `${routeNote(o)}<p>Перед печатью подготовьте принтер:</p><ol>
-          <li>Положите в лоток <b>${sheets} л. A4</b> ${cardsDeck ? "плотной фотобумаги (200–300 г/м²)" : "бумаги для фото"}.</li>
+          <li>Положите в лоток <b>${sheets} л. A4</b> ${cardsDeck ? "плотной фотобумаги (200–300 г/м²)" : o.kind === "doc" ? "обычной офисной бумаги" : "бумаги для фото"}.</li>
           <li>Проверьте, что принтер включён и чернил достаточно.</li>
           ${cardsDeck ? "<li>Сначала печатаются лицевые стороны, затем — рубашки.</li>" : ""}</ol>`,
         ok: "Принтер готов — печатать",
@@ -772,6 +772,10 @@ async function renderPrices() {
         ${Object.keys(prices.photo).map((f) => `
           <div class="price-row"><span>${fmt[f] || f}, цветное</span>${money(`photo.${f}.color`, prices.photo[f].color)}</div>
           <div class="price-row"><span>${fmt[f] || f}, ч/б</span>${money(`photo.${f}.bw`, prices.photo[f].bw)}</div>`).join("")}
+      </section>
+      <section class="card"><h3>Документы — за одну страницу A4</h3>
+        <div class="price-row"><span>Цветная печать</span>${money("doc.color", prices.doc.color)}</div>
+        <div class="price-row"><span>Чёрно-белая печать</span>${money("doc.bw", prices.doc.bw)}</div>
       </section>
       <section class="card"><h3>Надбавка за качество фото</h3>
         ${[["draft", "Черновое"], ["normal", "Обычное"], ["high", "Высокое"]].map(([k, t]) =>
