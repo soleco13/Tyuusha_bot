@@ -819,6 +819,12 @@ function printerLine(pr) {
   return `<div class="pr-line"><span class="dot ${tone}"></span><span class="pr-name">${esc(pr.name)}</span><span class="${pr.ok ? "muted" : "pr-bad"}">${esc(text)}</span></div>`;
 }
 
+function verLess(a, b) {
+  const pa = String(a || "").split(".").map(Number), pb = String(b || "").split(".").map(Number);
+  for (let i = 0; i < 3; i++) { if ((pa[i] || 0) !== (pb[i] || 0)) return (pa[i] || 0) < (pb[i] || 0); }
+  return false;
+}
+
 function agentCard(a) {
   const used = new Set((state.printers?.profiles || []).filter((p) => p.agent_id === a.id).map((p) => p.printer));
   const main = a.printers.filter((p) => used.has(p.name));
@@ -833,6 +839,11 @@ function agentCard(a) {
         <button class="btn sm danger" data-revoke="${a.id}">Отключить</button>
       </div>
     </div>
+    ${a.version && a.latest_version && verLess(a.version, a.latest_version) ? `<div class="banner warn"><div>Доступна версия ${esc(a.latest_version)}
+      <div class="small">${a.update_requested ? "Команда отправлена — программа обновится, когда принтер освободится." :
+        "Программа обновится сама в течение нескольких часов. Можно не ждать:"}</div></div>
+      ${a.update_requested ? "" : `<button class="btn sm" data-update="${a.id}">Обновить сейчас</button>`}</div>` : ""}
+    ${a.update ? `<div class="hint">Обновления: ${esc(a.update)}</div>` : ""}
     ${a.current ? `<div class="banner info"><span class="spinner"></span><div>${esc(a.current.label)}<div class="small">${esc(a.current.state)}</div></div></div>` : ""}
     ${main.length ? `<div class="pr-list">${main.map(printerLine).join("")}</div>` : '<div class="hint">Принтеры этого компьютера пока не выбраны ни в одном профиле.</div>'}
     ${other.length ? `<details class="pr-more"><summary>Другие принтеры на компьютере · ${other.length}</summary><div class="pr-list">${other.map(printerLine).join("")}</div></details>` : ""}
@@ -904,6 +915,10 @@ async function renderPrinters(soft = false) {
 }
 
 function bindAgentButtons() {
+  document.querySelectorAll("[data-update]").forEach((b) => b.addEventListener("click", () => withLoading(b, "Отправляем…", async () => {
+    try { toast((await api(`/api/printers/agents/${b.dataset.update}`, { method: "POST", body: { update: true } })).message, "ok"); renderPrinters(true); }
+    catch (e) { toast(e.message, "error"); }
+  })));
   document.querySelectorAll("[data-rename]").forEach((b) => b.addEventListener("click", async () => {
     const a = state.printers.agents.find((x) => x.id === Number(b.dataset.rename));
     const res = await confirmModal({ title: "Название компьютера", ok: "Сохранить",
@@ -971,8 +986,7 @@ async function pairModal() {
   wrap.innerHTML = `<div class="modal" role="dialog" aria-modal="true">
     <h3>Подключить компьютер с принтером</h3>
     <ol class="pair-steps">
-      <li>${state.printers?.download ? 'На компьютере с принтером <a href="/agent/download">скачайте программу «Тюша Печать»</a> и запустите её.' :
-        "Запустите на компьютере с принтером программу «Тюша Печать» (папка agent в репозитории)."}</li>
+      <li>На компьютере с принтером <a href="/agent/download">скачайте программу «Тюша Печать»</a> и запустите её. Дальше она обновляется сама.</li>
       <li>Адрес сервера: <code>${esc(location.origin)}</code></li>
       <li>Введите код:</li></ol>
     <div class="pair-code" aria-label="Код подключения">${code.code.slice(0, 3)} ${code.code.slice(3)}</div>

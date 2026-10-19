@@ -222,6 +222,9 @@ CREATE TABLE IF NOT EXISTS print_jobs (
 CREATE INDEX IF NOT EXISTS print_jobs_state ON print_jobs(state);
 """)
 
+if "update_requested" not in {r[1] for r in _conn.execute("PRAGMA table_info(agents)")}:
+    _conn.execute("ALTER TABLE agents ADD COLUMN update_requested INTEGER NOT NULL DEFAULT 0")
+
 AGENT_JSON = ("status",)
 PROFILE_JSON = ("devmode",)
 JOB_JSON = ("pages", "settings")

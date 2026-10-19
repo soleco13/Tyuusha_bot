@@ -299,6 +299,17 @@ async def on_agent_job(job: dict) -> None:
 agents.on_job_update = on_agent_job
 
 
+async def on_agent_state(agent: dict, online: bool) -> None:
+    if online:
+        await tg.notify_admins(f"✅ Компьютер с принтером «{agent['name']}» снова на связи — печать работает.")
+    else:
+        await tg.notify_admins(f"⚠️ Компьютер с принтером «{agent['name']}» не на связи больше {agents.OFFLINE_ALERT // 60} мин. "
+                               "Заказы не напечатаются: проверьте, что компьютер включён и программа «Тюша Печать» открыта.")
+
+
+agents.on_agent_state = on_agent_state
+
+
 # ---------- выдача и отмена ----------
 
 async def issue(order_id: int, actor: str = "admin", notify: bool = True) -> dict:

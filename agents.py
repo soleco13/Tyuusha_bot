@@ -22,6 +22,9 @@ from pathlib import Path
 
 from aiohttp import web
 
+import aiohttp
+
+import config
 import db
 
 log = logging.getLogger("agents")
@@ -42,6 +45,10 @@ LOST_AFTER = 120      # во время печати пропала связь �
 _wake: dict[int, asyncio.Event] = {}
 _pair_attempts: dict[str, list[float]] = {}
 on_job_update = None  # async callback(job) — выставляет service.py
+on_agent_state = None  # async callback(agent, online) — компьютер пропал со связи / вернулся
+OFFLINE_ALERT = 90     # столько секунд без связи — сообщаем операторам
+_online_state: dict[int, bool] = {}
+_latest: dict = {"version": None, "checked": 0.0}
 
 
 class PrintError(Exception):
@@ -128,8 +135,54 @@ def request_cancel(job_id: int) -> None:
         wake(job["agent_id"])
 
 
+def agent_config() -> dict:
+    """Параметры работы программы — приходят ей при каждом опросе, менять на компьютерах ничего не нужно."""
+    return {"poll_wait": POLL_WAIT, "update_repo": config.AGENT_UPDATE_REPO, "update_check_hours": 6,
+            "stuck_minutes": 20}
+
+
+async def refresh_latest() -> None:
+    """Последняя версия программы на GitHub — чтобы панель показывала «доступно обновление»."""
+    _latest["checked"] = time.time()
+    url = f"https://api.github.com/repos/{config.AGENT_UPDATE_REPO}/releases?per_page=20"
+    try:
+        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=20)) as s:
+            async with s.get(url, headers={"Accept": "application/vnd.github+json", "User-Agent": "Tyusha-server"}) as r:
+                releases = await r.json() if r.status == 200 else []
+    except Exception as e:  # noqa: BLE001
+        log.info("Не удалось узнать последнюю версию программы: %s", e)
+        return
+    versions = [rel["tag_name"][len("agent-v"):] for rel in releases if isinstance(rel, dict)
+                and str(rel.get("tag_name", "")).startswith("agent-v") and not rel.get("draft") and not rel.get("prerelease")]
+    key = lambda v: tuple(int(x) for x in v.split(".") if x.isdigit())  # noqa: E731
+    _latest["version"] = max(versions, key=key) if versions else None
+
+
+def request_update(agent_id: int) -> None:
+    db.update_agent(agent_id, update_requested=1)
+    wake(agent_id)
+
+
+async def watch_agents() -> None:
+    """Сообщаем операторам, когда компьютер с принтером пропал со связи и когда вернулся."""
+    used = {p["agent_id"] for p in db.list_profiles() if p["agent_id"]}
+    for a in db.list_agents():
+        online = bool(a.get("last_seen")) and time.time() - a["last_seen"] < OFFLINE_ALERT
+        before = _online_state.get(a["id"])
+        _online_state[a["id"]] = online
+        if before is None or before == online or a["id"] not in used or not on_agent_state:
+            continue
+        try:
+            await on_agent_state(a, online)
+        except Exception:
+            log.exception("Ошибка уведомления о компьютере %s", a["id"])
+
+
 async def sweep() -> None:
     """Задания, которые застряли из-за пропавшей связи, — в ошибку, чтобы оператор видел и решал."""
+    if time.time() - _latest["checked"] > 1800:
+        asyncio.create_task(refresh_latest())
+    await watch_agents()
     now = time.time()
     for job in db.print_jobs("state IN ('queued', 'sent', 'printing')"):
         agent = db.get_agent(job["agent_id"])
@@ -153,6 +206,8 @@ def overview() -> dict:
     for a in db.list_agents():
         st = a.get("status") or {}
         agents.append({"id": a["id"], "name": a["name"], "online": is_online(a), "version": a.get("version"),
+                       "latest_version": _latest["version"], "update_requested": bool(a.get("update_requested")),
+                       "update": st.get("update"),
                        "last_seen": a.get("last_seen"), "seen_ago": int(time.time() - (a.get("last_seen") or 0)),
                        "printers": st.get("printers", []), "default_printer": st.get("default_printer"),
                        "current": st.get("current"), "dry_run": st.get("dry_run", False)})
@@ -303,9 +358,14 @@ async def poll(request: web.Request) -> web.Response:
         job, cancels = collect()
     if job:
         await _notify(job)
-    return web.json_response({"ok": True, "name": db.get_agent(agent["id"])["name"],
+    fresh = db.get_agent(agent["id"])
+    update_now = bool(fresh.get("update_requested"))
+    if update_now:
+        db.update_agent(agent["id"], update_requested=0)
+    return web.json_response({"ok": True, "name": fresh["name"],
                               "job": _job_payload(job) if job else None, "cancel": cancels,
-                              "profiles": _agent_profiles(agent["id"])})
+                              "profiles": _agent_profiles(agent["id"]), "config": agent_config(),
+                              "update_now": update_now})
 
 
 async def page(request: web.Request) -> web.StreamResponse:

@@ -20,6 +20,9 @@ ADMIN_HOST = os.getenv("ADMIN_HOST", "127.0.0.1")
 ADMIN_PORT = int(os.getenv("ADMIN_PORT", "8080"))
 ADMIN_URL = os.getenv("ADMIN_URL") or f"http://{'127.0.0.1' if ADMIN_HOST == '0.0.0.0' else ADMIN_HOST}:{ADMIN_PORT}"
 
+# Откуда программа «Тюша Печать» берёт новые версии (GitHub Releases, теги agent-vX.Y.Z)
+AGENT_UPDATE_REPO = os.getenv("AGENT_UPDATE_REPO", "soleco13/Tyuusha_bot")
+
 DATA = Path(os.getenv("PRINTBOT_DATA") or BASE / "data")
 SESSIONS_DIR = DATA / "sessions"
 ORDERS_DIR = DATA / "orders"

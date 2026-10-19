@@ -369,8 +369,7 @@ AGENT_EXE = config.BASE / "agent" / "dist" / "TyushaPrint.exe"
 
 
 async def printers_overview(request: web.Request) -> web.Response:
-    return web.json_response({"ok": True, "mode": config.PRINT_MODE, **agents.overview(),
-                              "download": AGENT_EXE.exists()})
+    return web.json_response({"ok": True, "mode": config.PRINT_MODE, **agents.overview(), "download": True})
 
 
 async def pair_code(request: web.Request) -> web.Response:
@@ -380,6 +379,9 @@ async def pair_code(request: web.Request) -> web.Response:
 async def agent_update(request: web.Request) -> web.Response:
     agent_id = int(request.match_info["id"])
     body = await request.json()
+    if body.get("update"):
+        agents.request_update(agent_id)
+        return web.json_response({"ok": True, "message": "Команда отправлена: программа проверит обновление и поставит его, когда принтер свободен"})
     if body.get("revoke"):
         agents.revoke(agent_id)
         return web.json_response({"ok": True, "message": "Компьютер отключён — печатать на нём больше нельзя"})
@@ -423,10 +425,8 @@ async def print_job_state(request: web.Request) -> web.Response:
 
 
 async def agent_download(request: web.Request) -> web.StreamResponse:
-    if not AGENT_EXE.exists():
-        return web.Response(status=404, content_type="text/plain", charset="utf-8",
-                            text="Программа ещё не собрана на сервере: запустите agent/build_agent.bat на Windows "
-                                 "и положите agent/dist/TyushaPrint.exe на сервер.")
+    if not AGENT_EXE.exists():  # обычный случай: берём последнюю версию с GitHub Releases
+        raise web.HTTPFound(f"https://github.com/{config.AGENT_UPDATE_REPO}/releases/latest/download/TyushaPrint.exe")
     return web.FileResponse(AGENT_EXE, headers={"Content-Disposition": 'attachment; filename="TyushaPrint.exe"'})
 
 
