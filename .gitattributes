@@ -1,0 +1,9 @@
+# Единые концы строк: исходники — LF, bat-файлы — CRLF (так их понимает Windows)
+* text=auto eol=lf
+*.bat text eol=crlf
+*.png binary
+*.webp binary
+*.gif binary
+*.ico binary
+*.ttf binary
+*.exe binary
