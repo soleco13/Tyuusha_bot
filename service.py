@@ -19,6 +19,7 @@ import logging
 import shutil
 from pathlib import Path
 
+import agentq
 import cards
 import config
 import db
@@ -129,6 +130,8 @@ async def create_order(session: dict, user) -> dict:
 
 async def start_print(order_id: int, part: str, actor: str = "admin") -> dict:
     """part: front — лицевые/все листы, back — рубашки."""
+    if config.PRINT_MODE == "agent" and not agentq.online():
+        raise ServiceError("Компьютер с принтером не на связи. Включите его и запустите агент печати")
     async with _lock(order_id):
         order = get(order_id)
         allowed = ("fronts_printed",) if part == "back" else ("new", "fronts_printed", "printed", "issued")
@@ -149,10 +152,13 @@ async def start_print(order_id: int, part: str, actor: str = "admin") -> dict:
         await tg.safe_send(order["user_id"], f"🖨 Начали печатать заказ №{order_id}! Напишу, когда будет готово.")
     p = order["params"]
     try:
-        result = await asyncio.to_thread(
-            printing.print_pages, pages, printer=config.PRINTER_NAME, job_name=f"Тюша №{order_id} {what}",
-            color=p.get("color", True), quality=p.get("quality", "high"), mode=config.PRINT_MODE,
-            file_dir=config.PRINTED_DIR)
+        if config.PRINT_MODE == "agent":
+            result = agentq.submit(order_id, f"Тюша №{order_id} {what}", pages, p.get("color", True), p.get("quality", "high"))
+        else:
+            result = await asyncio.to_thread(
+                printing.print_pages, pages, printer=config.PRINTER_NAME, job_name=f"Тюша №{order_id} {what}",
+                color=p.get("color", True), quality=p.get("quality", "high"), mode=config.PRINT_MODE,
+                file_dir=config.PRINTED_DIR)
     except Exception as e:
         log.exception("Ошибка печати")
         db.update_order(order_id, status=prev, print_state=None, print_job=None, last_error=f"Ошибка печати: {e}")
@@ -185,7 +191,7 @@ async def _finish_print(order_id: int) -> dict:
     if first_time:
         await tg.send_anim(order["user_id"], "done",
                            f"🎉 <b>Ура! Заказ №{order_id} напечатан!</b>\n\nОн ждёт выдачи. Спасибо, что выбрали Тюшу 🐾",
-                           tg.kb([("📦 Мои заказы", "menu:orders")]))
+                           tg.kb([("📦 Мои заказы", f"webapp:{config.ADMIN_URL}/miniapp/#orders")]))
     return order
 
 
@@ -195,7 +201,9 @@ async def cancel_print_job(order_id: int, actor: str = "admin") -> dict:
         if order["status"] != "printing":
             raise ServiceError("Заказ сейчас не печатается")
         job = order["print_job"] or {}
-        if job.get("job_id"):
+        if job.get("printer") == "agent":
+            agentq.request_cancel(job["job_id"])
+        elif job.get("job_id"):
             try:
                 await asyncio.to_thread(printing.cancel_job, job["printer"], job["job_id"])
             except Exception as e:
@@ -210,6 +218,9 @@ async def watch_print_jobs() -> None:
     for order in db.orders_in(("printing",)):
         job = order["print_job"] or {}
         if not job.get("job_id"):
+            continue
+        if job.get("printer") == "agent":
+            await _watch_agent_job(order, job)
             continue
         try:
             state = await asyncio.to_thread(printing.job_status, job["printer"], job["job_id"])
@@ -228,6 +239,35 @@ async def watch_print_jobs() -> None:
             if state["problem"]:
                 db.add_event(order["id"], f"Принтер сообщает: {', '.join(state['states'])}", "system", "error")
                 await tg.notify_admins(f"⚠️ Заказ №{order['id']}: принтер сообщает — {', '.join(state['states'])}")
+
+
+async def _watch_agent_job(order: dict, job: dict) -> None:
+    """Задание ушло на компьютер оператора: следим за его состоянием в очереди агента."""
+    pj = db.get_print_job(job["job_id"])
+    oid = order["id"]
+    if not pj or pj["state"] == "cancelled":
+        return
+    if pj["state"] == "done":
+        await _finish_print(oid)
+        return
+    if pj["state"] == "error":
+        reason = pj["detail"] or "неизвестная ошибка"
+        db.update_order(oid, status=job.get("prev", "new"), print_state=None, print_job=None,
+                        last_error=f"Ошибка печати: {reason}")
+        db.add_event(oid, f"Ошибка печати: {reason}", "system", "error")
+        await tg.notify_admins(f"⚠️ Заказ №{oid}: печать не удалась — {reason}\nЗаказ вернулся в прежний статус, можно запустить печать снова.")
+        return
+    text = {"queued": "Ждёт компьютер с принтером", "taken": "Компьютер принял задание"}.get(pj["state"]) \
+        or pj["detail"] or "Печатается"
+    if pj["state"] == "queued" and not agentq.online():
+        text = "⚠️ Компьютер с принтером не на связи"
+    if pj["problem"]:
+        text = "⚠️ " + text
+        if text != order["print_state"]:
+            db.add_event(oid, f"Принтер сообщает: {pj['detail']}", "system", "error")
+            await tg.notify_admins(f"⚠️ Заказ №{oid}: принтер сообщает — {pj['detail']}")
+    if text != order["print_state"]:
+        db.update_order(oid, print_state=text, last_error=pj["detail"] if pj["problem"] else None)
 
 
 # ---------- выдача и отмена ----------
@@ -261,7 +301,7 @@ async def cancel(order_id: int, actor: str = "admin", reason: str = "", notify: 
         await tg.notify_admins(f"✖️ Клиент отменил заказ №{order_id}")
     elif notify:
         text = f"Упс… заказ №{order_id} отменён." + (f"\nПричина: {html.escape(reason)}" if reason else "")
-        await tg.send_anim(order["user_id"], "oops", text, tg.kb([("🏠 В меню", "menu:home")]))
+        await tg.send_anim(order["user_id"], "oops", text, tg.kb([("🐾 Открыть Тюшу", f"webapp:{config.ADMIN_URL}/miniapp/")]))
     return order
 
 

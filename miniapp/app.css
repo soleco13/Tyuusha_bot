@@ -140,7 +140,7 @@ h1, h2, h3 { text-wrap: balance; margin: 0; }
 .app {
   position: relative; z-index: 1; max-width: var(--app-w); margin: 0 auto; min-height: 100%;
 }
-.stage { position: relative; min-height: 100vh; overflow-x: clip; }
+.stage { position: relative; min-height: 100vh; min-height: 100dvh; overflow-x: clip; }
 .screen {
   padding-left: max(16px, env(safe-area-inset-left, 0px));
   padding-right: max(16px, env(safe-area-inset-right, 0px));

@@ -17,6 +17,7 @@ from PIL import Image
 import config
 import db
 import pricing
+import agentq
 import miniapi
 import printing
 import service
@@ -135,8 +136,12 @@ async def summary(request: web.Request) -> web.Response:
     counts = db.count_by_status()
     today = time.strftime("%Y-%m-%d")
     today_count, today_sum = db.stats_since(today)
-    printer = await asyncio.to_thread(printing.printer_status, config.PRINTER_NAME) \
-        if config.PRINT_MODE == "printer" else {"name": "сохранение в файлы", "ok": True, "problems": [], "jobs": []}
+    if config.PRINT_MODE == "agent":
+        printer = agentq.printer_status()
+    elif config.PRINT_MODE == "printer":
+        printer = await asyncio.to_thread(printing.printer_status, config.PRINTER_NAME)
+    else:
+        printer = {"name": "сохранение в файлы", "ok": True, "problems": [], "jobs": []}
     return web.json_response({
         "ok": True,
         "groups": [{"key": k, "title": t, "count": sum(counts.get(s, 0) for s in st) if st else sum(counts.values())}
@@ -252,6 +257,8 @@ async def prices_put(request: web.Request) -> web.Response:
 
 async def printer_cancel_job(request: web.Request) -> web.Response:
     job_id = int(request.match_info["job"])
+    if config.PRINT_MODE == "agent":
+        raise service.ServiceError("Задание на компьютере оператора удаляется кнопкой «Снять с принтера» в карточке заказа или в окне «Печать» самого компьютера")
     printer = config.PRINTER_NAME or printing.default_printer()
     try:
         await asyncio.to_thread(printing.cancel_job, printer, job_id)
@@ -277,7 +284,7 @@ def make_app() -> web.Application:
         web.get(r"/api/orders/{id:\d+}/download", order_zip),
         web.get("/api/prices", prices_get), web.put("/api/prices", prices_put),
         web.post(r"/api/printer/jobs/{job:\d+}/cancel", printer_cancel_job),
-        *miniapi.routes(),
+        *miniapi.routes(), *agentq.routes(),
         web.get("/miniapp", miniapp_index), web.get("/miniapp/", miniapp_index),
         web.static("/miniapp", config.BASE / "miniapp"),
         web.static("/static", STATIC),
