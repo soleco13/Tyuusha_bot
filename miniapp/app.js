@@ -35,6 +35,9 @@ let PRICES = {
   doc: { color: 15, bw: 8 },
   photo: { "10x15": { color: 30, bw: 20 }, a5: { color: 60, bw: 35 }, a4: { color: 100, bw: 50 } },
   quality_markup: { draft: -20, normal: 0, high: 20 },
+  paper: { thick: 6, matte: 8, lam: 25 },
+  craft: { memory_base: 290, memory_pair: 25, dates_sheet: 120, wishes_sheet: 120, stickers_sheet: 190, calendar: 890,
+    postcard: 70, box: 190, game_sheet: 120, enhance_photo: 10 },
 };
 
 // Рубашки карт: картинки — img/backs/<key>.png, список и выбор по умолчанию уточняются с сервера
@@ -133,36 +136,50 @@ function store(key, value) {
   return null;
 }
 
-function availability() { return { ok: true, low: false }; }
-function availLine() { return `<span class="avail ok">${icon("check")}Печатаем после заказа</span>`; }
+function productPapers(p) {
+  if (p.craft) return p.craft.papers;
+  return PAPER_CHOICES[p.cat === "cards" ? "cards" : p.cat] || [];
+}
+function availability(p) {
+  const states = productPapers(p || {}).map((k) => PAPERS[k]?.state || "ok");
+  const ok = !states.length || states.some((x) => x !== "out");
+  return { ok, low: ok && states.length > 0 && states.every((x) => x !== "ok") };
+}
+function availLine(p) {
+  const a = availability(p);
+  if (!a.ok) return `<span class="avail no">${icon("warn")}Временно нет: закончилась бумага</span>`;
+  if (a.low) return `<span class="avail warn">${icon("clock")}Материалов осталось мало</span>`;
+  return `<span class="avail ok">${icon("check")}Печатаем после заказа</span>`;
+}
 
-function photoStyle(ph) {
+function photoStyle(ph, aspect = 1, dflt = [0.5, 0.5]) {
   if (!ph) return "background:var(--surface-2)";
-  return `background:url('${ph.url}') center / ${ph.sample ? "contain" : "cover"} no-repeat, ${ph.bg || "#e8ecf4"}`;
+  return `background:url('${ph.url}') ${ph.sample ? "center" : facePos(ph, aspect, dflt)} / ${ph.sample ? "contain" : "cover"} no-repeat, ${ph.bg || "#e8ecf4"}`;
 }
 
 // ---------- игральная карта ----------
 
 // Карта как в печати: крупный засечный ранг, рядом большая масть, под рангом маленькая; фото с мягкими краями
-function playingCard({ rank, suit, ph, zoom = 1, x = 50, y = 50, cls = "", style = "", full = false, ink = "black", vintage = false }) {
+function playingCard({ rank, suit, ph, zoom = 1, x = null, y = null, cls = "", style = "", full = false, ink = "black", vintage = false }) {
   const joker = rank === "JOKER";
   if (vintage) {
     const [glyph, color] = joker ? ["★\uFE0E", "joker"] : SUITS[suit];
     const r = joker ? "J" : rank;
     const art = !joker && rank in COURT ? `background:url('img/vintage/${SUIT_KEYS[suit]}_${COURT[rank]}.jpg') center / cover no-repeat`
-      : ph ? `background:url('${ph.url}') 50% 42% / cover no-repeat, ${ph.bg || "#e8ecf4"}` : "background:var(--surface-2)";
+      : ph ? `background:url('${ph.url}') ${facePos(ph, .62)} / cover no-repeat, ${ph.bg || "#e8ecf4"}` : "background:var(--surface-2)";
     const ix = (side) => `<div class="vix ${side} ${r.length > 1 ? "two" : ""}"><span>${r}</span><b>${glyph}</b></div>`;
     return `<div class="pc vin ${color} ${cls}" style="${style}"><div class="vf" style="${art}"></div>${ix("")}${ix("r")}</div>`;
   }
   if (full) {
     const glyph = joker ? "★\uFE0E" : SUITS[suit][0];
-    const bg = ph ? `background:url('${ph.url}') 50% 45% / cover no-repeat, ${ph.bg || "#e8ecf4"}` : "background:var(--surface-2)";
+    const bg = ph ? `background:url('${ph.url}') ${facePos(ph, 63 / 88, [0.5, 0.45])} / cover no-repeat, ${ph.bg || "#e8ecf4"}` : "background:var(--surface-2)";
     return `<div class="pc full ink-${ink} ${cls}" style="${style}"><div class="bg" style="${bg}"></div>
       <div class="fix ${(joker ? "J" : rank).length > 1 ? "two" : ""}"><span>${joker ? "J" : rank}</span><b>${glyph}</b></div></div>`;
   }
   const [glyph, color] = joker ? ["★\uFE0E", "joker"] : SUITS[suit];
   const r = joker ? "J" : rank;
-  const bg = ph ? `background:url('${ph.url}') ${x}% ${y}% / ${ph.sample ? Math.round(zoom * 100) + "%" : zoom === 1 ? "cover" : Math.round(zoom * 120) + "%"} no-repeat, ${ph.bg || "#e8ecf4"}` : "background:var(--surface-2)";
+  const pos = x != null ? `${x}% ${y ?? 50}%` : ph?.sample ? "50% 50%" : facePos(ph, 42 / 61);
+  const bg = ph ? `background:url('${ph.url}') ${pos} / ${ph.sample ? Math.round(zoom * 100) + "%" : zoom === 1 ? "cover" : Math.round(zoom * 120) + "%"} no-repeat, ${ph.bg || "#e8ecf4"}` : "background:var(--surface-2)";
   const ix = (side) => `<div class="ix ${side} ${r.length > 1 ? "two" : ""}"><span class="rk">${r}</span><b class="big">${glyph}</b><b class="sm">${glyph}</b></div>`;
   return `<div class="pc ${color} ${cls}" style="${style}"><div class="win" style="${bg}"></div>${ix("")}${ix("r")}</div>`;
 }
@@ -259,7 +276,7 @@ function unoCard({ rank, color, ph, colors, cls = "", style = "" }) {
   const plus = rank === "draw2" || rank === "wild4";
   const corner = digit || plus ? `<span>${rank === "draw2" ? "+2" : rank === "wild4" ? "+4" : rank}</span>` : unoSym(rank, "#fff", dark, 9, cols);
   let mid;
-  if (digit && ph) mid = `<div class="ovi"><div class="ovp" style="${photoStyle(ph)}"></div></div>`;
+  if (digit && ph) mid = `<div class="ovi"><div class="ovp" style="${photoStyle(ph, .7, [0.5, 0.42])}"></div></div>`;
   else if (digit) mid = `<b class="big">${rank}</b>`;
   else mid = `<div class="sym s-${rank}">${unoSym(rank, base, dark, 7, cols)}</div>`;
   return `<div class="uc u-${color == null ? "wild" : color} ${cls}" style="--b:${base};--d:${dark};${style}"><i class="fr"></i><div class="ov">${mid}</div>
@@ -334,10 +351,13 @@ function productArt(p, big = false) {
   if (p.art === "dates") return `<div class="fan"><div class="pc q"><span>${esc(QUESTIONS[1])}</span></div><div class="pc q"><span>${esc(QUESTIONS[0])}</span></div><div class="pc q"><span>${esc(QUESTIONS[2])}</span></div></div>`;
   if (p.art === "memory") return `<div class="fan" style="aspect-ratio:1;width:44%">${[0, 0, 1].map((i) => `<div class="pc memo"><div class="win" style="${photoStyle(sample(i))};inset:8%"></div></div>`).join("")}</div>`;
   if (p.art === "uno") return `<div class="fan">${cardBack("reverse_lilac")}${unoCard({ rank: "7", color: 2, ph: sample(0) })}${unoCard({ rank: "reverse", color: 0 })}</div>`;
+  const ca = p.cat === "gifts" ? craftArt(p.art, sample) : "";
+  if (ca) return ca;
   if (p.art === "doc") return `<div class="fan" style="aspect-ratio:210/297;width:44%"><div class="page"></div><div class="page"></div><div class="page"><b>1</b></div></div>`;
   return `<div class="fan" style="aspect-ratio:1;width:46%">${[2, 1, 0].map((i) => `<div class="pc memo" style="border-radius:6%"><div class="win" style="${photoStyle(sample(i))};inset:6%;outline:0;border-radius:3%"></div></div>`).join("")}</div>`;
 }
-const artBg = { classic: "#E4ECFD", full: "#EDE7F8", uno: "#FCE8F0", dates: "#FBE6EA", memory: "#E3F3EC", doc: "#EEF1F7", photo: "#FDF1DA" };
+const artBg = { wishes: "#FBEDEA", stickers: "#EAF0FB", calendar: "#F4EEE4", postcards: "#EAF3EC", box: "#EFE9F8", game: "#E8EEF8",
+  classic: "#E4ECFD", full: "#EDE7F8", uno: "#FCE8F0", dates: "#FBE6EA", memory: "#E3F3EC", doc: "#EEF1F7", photo: "#FDF1DA" };
 
 // ---------- расчёт цены ----------
 
@@ -345,19 +365,33 @@ function photoUnit(j) {
   const base = PRICES.photo[j.format][j.color ? "color" : "bw"];
   return Math.round(base * 100 * (100 + PRICES.quality_markup[j.quality]) / 100) / 100;
 }
+// Надбавки: бумага (₽ за лист A4) и улучшение слабых фото — так же считает сервер (pricing.quote)
+function addExtras(q, paper, sheets, photosList, enhance) {
+  const ex = paperExtra(paper) * sheets;
+  if (ex) { q.lines.push([`${PAPERS[paper].title}: ${sheets} л. × ${rub(paperExtra(paper))}`, ex]); q.total += ex; }
+  const n = enhance ? weakPhotos(photosList || []) : 0;
+  if (n) { const e = n * (PRICES.craft?.enhance_photo ?? 10); q.lines.push([`Улучшение ${n} фото`, e]); q.total += e; }
+  q.total = Math.round(q.total * 100) / 100;
+  return q;
+}
+const photoSheets = (j) => Math.ceil(j.photos.length * j.copies / (j.format === "10x15" ? 2 : 1));
+const deckCount = (dk) => (isUno(dk.pid) ? 108 : dk.pid === "deck54" ? 54 : 36);
+const deckSheets = (dk) => Math.ceil(deckCount(dk) / 9);
 function quotePhoto(j) {
   const rate = photoUnit(j);
   const n = j.photos.length * j.copies;
-  return { total: Math.round(n * rate * 100) / 100, lines: [[`${n} ${plural(n, "отпечаток", "отпечатка", "отпечатков")} × ${rub(rate)}`, n * rate]], valid: n > 0 };
+  return addExtras({ total: Math.round(n * rate * 100) / 100, lines: [[`${n} ${plural(n, "отпечаток", "отпечатка", "отпечатков")} × ${rub(rate)}`, n * rate]], valid: n > 0 },
+    j.paper, photoSheets(j), j.photos, j.enhance);
 }
 function quoteDoc(j) {
   const rate = PRICES.doc[j.color ? "color" : "bw"];
   const n = j.pages * j.copies;
-  return { total: n * rate, lines: [[`${n} ${plural(n, "страница", "страницы", "страниц")} × ${rub(rate)}`, n * rate]], valid: j.pages > 0 && !j.checking };
+  return addExtras({ total: n * rate, lines: [[`${n} ${plural(n, "страница", "страницы", "страниц")} × ${rub(rate)}`, n * rate]], valid: j.pages > 0 && !j.checking },
+    j.paper, n, [], false);
 }
 function quoteDeck(dk) {
   const p = byId(dk.pid);
-  return { total: p.price, lines: [[p.title, p.price]], valid: dk.photos.length > 0 };
+  return addExtras({ total: p.price, lines: [[p.title, p.price]], valid: dk.photos.length > 0 }, dk.paper, deckSheets(dk), dk.photos, dk.enhance);
 }
 
 // ---------- конструктор: раскладка колоды ----------
@@ -504,6 +538,7 @@ function statusPill(status) {
 function orderThumb(o) {
   if (o.thumbUrl) return `<div class="othumb" style="background:url('${o.thumbUrl}') center / cover"></div>`;
   if (o.kind === "doc") return `<div class="othumb" style="background:${artBg.doc}">${icon("doc")}</div>`;
+  if (o.kind === "craft") return `<div class="othumb" style="background:${artBg[o.product] || artBg.memory}">${icon(CRAFT_ICON[o.product] || "gift")}</div>`;
   return o.kind === "cards" ? `<div class="othumb" style="background:${artBg.classic}">${icon("cards")}</div>` : `<div class="othumb" style="background:${artBg.photo}">${icon("photo")}</div>`;
 }
 function dockBar(price, label, act, { disabled = false, sub = "Итого", go = "" } = {}) {
@@ -516,6 +551,350 @@ function dockBar(price, label, act, { disabled = false, sub = "Итого", go =
 // ---------- экраны ----------
 
 const SCREENS = {};
+
+// ---------- бумага, улучшение фото, кадр по лицу ----------
+
+// Варианты бумаги, надбавки и наличие на складе приходят с сервера (materials.py)
+let PAPERS = {
+  plain: { title: "Обычная", hint: "80 г/м², как в офисе", extra: 0, state: "ok" },
+  thick: { title: "Плотная", hint: "300 г/м², не просвечивает", extra: 6, state: "ok" },
+  photo: { title: "Фотобумага", hint: "глянцевая, яркие цвета", extra: 0, state: "ok" },
+  matte: { title: "Плотная матовая", hint: "без бликов, как открытка", extra: 8, state: "ok" },
+  card: { title: "Картон", hint: "300 г/м², как у магазинных карт", extra: 0, state: "ok" },
+  card_lam: { title: "Картон + ламинация", hint: "не боится воды и царапин", extra: 25, state: "ok" },
+  sticker: { title: "Самоклейка", hint: "клеится на телефон, ноутбук, кружку", extra: 0, state: "ok" },
+};
+let PAPER_CHOICES = { cards: ["card", "card_lam"], photo: ["photo", "matte"], doc: ["plain", "thick"] };
+let ENH = { available: false, low_res: 1000, max: 30 };
+
+const pickPaper = (choices) => choices.find((k) => PAPERS[k]?.state !== "out") || choices[0];
+const paperExtra = (k) => PAPERS[k]?.extra || 0;
+
+function paperPicker(model, choices, value, sheets) {
+  if (!choices || choices.length < 2) {
+    const k = choices?.[0];
+    return k ? `<div class="card flat"><div class="row"><span class="tile-icon">${icon("layers")}</span><div class="grow">
+      <div style="font-weight:600">${esc(PAPERS[k]?.title || "")}</div><div class="small muted">${esc(PAPERS[k]?.hint || "")}</div></div></div></div>` : "";
+  }
+  return `<div class="h-section"><h2>Бумага</h2></div><div class="papers" role="radiogroup" aria-label="Бумага">${choices.map((k) => {
+    const p = PAPERS[k] || { title: k, hint: "", extra: 0, state: "ok" };
+    const off = p.state === "out";
+    const extra = p.extra ? `+${rub(p.extra * sheets)}` : "без доплаты";
+    return `<button class="paper-opt ${k === value ? "on" : ""}" role="radio" aria-checked="${k === value}" ${off ? "disabled" : ""}
+      data-act="set" data-model="${model}" data-value="${k}"><span class="t">${esc(p.title)}</span><span class="s">${esc(p.hint)}</span>
+      <span class="x ${off ? "no" : p.state === "low" ? "warn" : ""}">${off ? "закончилась" : p.state === "low" ? `осталось мало · ${extra}` : extra}</span></button>`;
+  }).join("")}</div>`;
+}
+
+const weakPhotos = (list) => (ENH.available ? Math.min(ENH.max, list.filter((ph) => ph && Math.min(ph.w, ph.h) < ENH.low_res).length) : 0);
+function enhanceBlock(model, list, on) {
+  const n = weakPhotos(list);
+  if (!n) return "";
+  const price = (PRICES.craft?.enhance_photo ?? 10) * n;
+  return `<button class="check enh" role="checkbox" aria-checked="${on}" data-act="toggle" data-model="${model}"><span class="box">${icon("check")}</span>
+    <span><b>Улучшить ${n} ${plural(n, "слабое фото", "слабых фото", "слабых фото")} нейросетью · +${rub(price)}</b>
+    <small>Увеличим и сделаем чётче для печати. Нейросеть может чуть «дорисовать» мелкие детали.</small></span></button>`;
+}
+
+// Кадр по лицу — та же формула, что photoai.centering на сервере
+function focus(ph, aspect, dflt = [0.5, 0.42]) {
+  if (!ph?.face || !ph.w || !ph.h) return dflt;
+  const [x1, y1, x2, y2] = ph.face, W = ph.w, H = ph.h;
+  const [cw, ch] = W / H > aspect ? [H * aspect, H] : [W, W / aspect];
+  const axis = (c, crop, full) => (full - crop < 1 ? 0.5 : Math.min(1, Math.max(0, (c - crop / 2) / (full - crop))));
+  return [axis((x1 + x2) / 2 * W, cw, W), axis((y1 + y2) / 2 * H, ch, H)];
+}
+const facePos = (ph, aspect, dflt) => focus(ph, aspect, dflt).map((v) => `${(v * 100).toFixed(1)}%`).join(" ");
+function faceCut(ph, aspect) {
+  if (!ph?.face) return false;
+  const [x1, y1, x2, y2] = ph.face, W = ph.w, H = ph.h;
+  const [cw, ch] = W / H > aspect ? [H * aspect, H] : [W, W / aspect];
+  return (x2 - x1) * W > cw * 1.02 || (y2 - y1) * H > ch * 1.02;
+}
+
+async function thumbBlob(ph, side = 900) {
+  if (ph.thumbs?.[side]) return ph.thumbs[side];
+  let blob = ph.file;
+  try {
+    const bmp = await createImageBitmap(ph.file);
+    const k = Math.min(1, side / Math.max(bmp.width, bmp.height));
+    const c = document.createElement("canvas");
+    c.width = Math.round(bmp.width * k); c.height = Math.round(bmp.height * k);
+    c.getContext("2d").drawImage(bmp, 0, 0, c.width, c.height);
+    bmp.close?.();
+    blob = await new Promise((resolve) => c.toBlob((b) => resolve(b || ph.file), "image/jpeg", 0.88));
+  } catch (e) { /* отдадим исходный файл */ }
+  ph.thumbs = { ...(ph.thumbs || {}), [side]: blob };
+  return blob;
+}
+
+// Ищем лица на сервере (тот же детектор, что и для печати), чтобы превью кадрировало как на бумаге
+async function detectFace(ph) {
+  if (!ph?.file || ph.faceChecked) return;
+  ph.faceChecked = true;
+  try {
+    const form = new FormData();
+    form.append("photo", await thumbBlob(ph, 640), "thumb.jpg");
+    const r = await api("/mapi/faces", { method: "POST", body: form });
+    if (r.box) { ph.face = r.box; render(); }
+  } catch (e) { /* без лица — кадр по центру */ }
+}
+
+// ---------- 3D-превью: карточка крутится, видно лицо и оборот; можно повернуть пальцем ----------
+
+function flip3d(front, back, ar = "63/88") {
+  return `<div class="flip3d" data-flip style="--ar:${ar}"><div class="flip-in"><div class="flip-face">${front}</div>
+    <div class="flip-face flip-back">${back}</div></div></div>
+    <div class="flip-hint">${icon("repeat", "sm")}Покрутите пальцем</div>`;
+}
+const FLIP = new WeakMap();
+const REDUCED = matchMedia("(prefers-reduced-motion: reduce)");
+function flipLoop(t) {
+  document.querySelectorAll("[data-flip]").forEach((el) => {
+    let s = FLIP.get(el);
+    if (!s) { s = { a: -24, v: 0.03, drag: false, last: t }; FLIP.set(el, s); }
+    const dt = Math.min(64, t - s.last);
+    s.last = t;
+    if (!s.drag) {
+      const base = REDUCED.matches ? 0 : 0.03;
+      s.v += (base - s.v) * 0.025;
+      s.a += s.v * dt;
+    }
+    const inner = el.firstElementChild;
+    if (inner) inner.style.transform = `rotateX(6deg) rotateY(${s.a.toFixed(2)}deg)`;
+  });
+  requestAnimationFrame(flipLoop);
+}
+requestAnimationFrame(flipLoop);
+document.addEventListener("pointerdown", (e) => {
+  const el = e.target.closest("[data-flip]");
+  if (!el) return;
+  const s = FLIP.get(el);
+  if (!s) return;
+  Object.assign(s, { drag: true, x0: e.clientX, a0: s.a, px: e.clientX, pt: performance.now(), v: 0 });
+  el.setPointerCapture?.(e.pointerId);
+  const move = (ev) => {
+    const now = performance.now();
+    s.a = s.a0 + (ev.clientX - s.x0) * 0.7;
+    s.v = Math.max(-0.8, Math.min(0.8, (ev.clientX - s.px) * 0.7 / Math.max(8, now - s.pt)));
+    s.px = ev.clientX; s.pt = now;
+  };
+  const up = () => { s.drag = false; el.removeEventListener("pointermove", move); el.removeEventListener("pointerup", up); el.removeEventListener("pointercancel", up); };
+  el.addEventListener("pointermove", move);
+  el.addEventListener("pointerup", up);
+  el.addEventListener("pointercancel", up);
+});
+
+// ---------- изделия конструктора (products.py): поля приходят с сервера, экран строится по ним ----------
+
+let CRAFTS = [];
+const CRAFT_ART = { memory: "memory", dates: "dates", wishes: "wishes", stickers: "stickers", calendar: "calendar",
+  postcards: "postcards", box: "box", game: "game" };
+const CRAFT_ICON = { memory: "layers", dates: "heart", wishes: "stars", stickers: "scissors", calendar: "calendar",
+  postcards: "letter", box: "box", game: "cards" };
+const craftSpec = (key) => CRAFTS.find((c) => c.key === key);
+
+function craftPriceFrom(key) {
+  const p = PRICES.craft || {};
+  return { memory: (p.memory_base || 0) + 6 * (p.memory_pair || 0), dates: p.dates_sheet, wishes: p.wishes_sheet,
+    stickers: p.stickers_sheet, calendar: p.calendar, postcards: p.postcard, box: p.box, game: p.game_sheet }[key] || 0;
+}
+
+function registerCrafts(list) {
+  CRAFTS = list;
+  for (let i = PRODUCTS.length - 1; i >= 0; i--) if (PRODUCTS[i].cat === "gifts") PRODUCTS.splice(i, 1);
+  list.forEach((c) => {
+    const photos = c.fields.find((f) => f.type === "photos");
+    PRODUCTS.push({ id: c.key, cat: "gifts", title: c.title, sub: c.sub, art: CRAFT_ART[c.key] || "memory", craft: c,
+      priceFrom: `от ${craftPriceFrom(c.key)} ₽`,
+      includes: [[CRAFT_ICON[c.key] || "gift", c.sub],
+        ...(photos ? [["photo", photos.max > 1 ? `Фото: от ${photos.min} до ${photos.max}` : "Одно фото"]] : []),
+        ["layers", "Бумага на выбор: " + c.papers.map((k) => PAPERS[k]?.title.toLowerCase() || k).join(" или ")]],
+      reqs: photos ? ["Лучше от 1000 px по короткой стороне", "JPG или PNG до 20 МБ", "Лица Тюша сама поставит в центр кадра"] : null });
+  });
+}
+
+function craftDefaults(spec) {
+  const v = {};
+  spec.fields.forEach((f) => {
+    if (f.type === "photos" || f.type === "csv") return;
+    if (f.type === "multi") v[f.key] = [...(f.default || [])];
+    else if (f.type === "lines" || f.type === "textarea") v[f.key] = "";
+    else v[f.key] = f.default ?? "";
+  });
+  return v;
+}
+
+function startCraft(key) {
+  const spec = craftSpec(key);
+  if (!spec) return false;
+  if (!state.craft || state.craft.key !== key) {
+    state.craft = { key, photos: [], values: craftDefaults(spec), csv: null, paper: pickPaper(spec.papers), enhance: false,
+      pv: null, loading: false, err: "" };
+  }
+  queuePreview(50);
+  return true;
+}
+
+let pvTimer = null, pvSeq = 0;
+function queuePreview(delay = 450) {
+  clearTimeout(pvTimer);
+  pvTimer = setTimeout(runPreview, delay);
+}
+async function runPreview() {
+  const c = state.craft;
+  if (!c) return;
+  const seq = ++pvSeq;
+  c.loading = true;
+  if (current().name === "craft") render();
+  try {
+    const form = new FormData();
+    form.append("meta", JSON.stringify({ product: c.key, ...c.values, n_photos: c.photos.length,
+      names: c.photos.map((p) => p.name), paper: c.paper }));
+    const send = c.photos.slice(0, c.key === "game" ? 8 : c.key === "calendar" ? 2 : 1);
+    for (const ph of send) form.append("photo", await thumbBlob(ph), ph.name);
+    if (c.csv) form.append("csv", new Blob([c.csv.text], { type: "text/csv" }), c.csv.name);
+    const r = await api("/mapi/preview", { method: "POST", body: form });
+    if (seq !== pvSeq) return;
+    c.pv = r.invalid ? { invalid: r.invalid } : r;
+    c.err = "";
+  } catch (e) {
+    if (seq === pvSeq) c.err = e.message;
+  } finally {
+    if (seq === pvSeq) {
+      c.loading = false;
+      if (["craft", "review"].includes(current().name)) render();
+    }
+  }
+}
+
+function quoteCraft(c) {
+  const enh = c.enhance ? (PRICES.craft?.enhance_photo ?? 10) * weakPhotos(c.photos) : 0;
+  const base = c.pv && !c.pv.invalid ? c.pv.amount : 0;
+  const lines = c.pv && !c.pv.invalid ? [[c.pv.detail, base]] : [];
+  if (enh) lines.push([`Улучшение ${weakPhotos(c.photos)} фото`, enh]);
+  return { total: base + enh, lines, valid: !!(c.pv && !c.pv.invalid) && !c.loading };
+}
+
+function craftPreviewArt(c, spec) {
+  const pv = c.pv;
+  const ar = c.key === "memory" ? "1/1" : c.key === "postcards" ? "100/140" : "63/88";
+  if (!pv || pv.invalid || !pv.front) {
+    return `<div class="pv-skel" style="aspect-ratio:${ar}">${c.loading ? `<span class="spin"></span>` : icon(CRAFT_ICON[c.key] || "gift", "lg")}</div>`;
+  }
+  const img = (src) => `<img src="${src}" alt="" draggable="false">`;
+  if (pv.back && spec.duplex) return flip3d(img(pv.front), img(pv.back), ar);
+  if (pv.back) return `<div class="pv-pair">${img(pv.back)}${img(pv.front)}</div>`;  // календарь: обложка и месяц
+  return `<div class="pv-one ${c.key}">${img(pv.front)}</div>`;
+}
+
+function craftField(c, f) {
+  const v = c.values[f.key];
+  const lbl = (extra = "") => `<span class="lbl">${esc(f.label)}${extra}</span>`;
+  if (f.type === "photos") {
+    const n = c.photos.length;
+    return `<div class="field">${lbl(`<span class="muted tabular">${n} из ${f.max}${f.min ? ` · нужно от ${f.min}` : ""}</span>`)}
+      <div class="photos">${c.photos.map((ph, i) => `<div class="photo" style="${photoStyle(ph)}"><span class="n">${i + 1}</span>
+        ${lowRes(ph) ? `<span class="bad" title="Низкое разрешение">${icon("warn")}</span>` : ""}
+        <button class="rm" data-act="craft-remove" data-i="${i}" aria-label="Убрать фото ${i + 1}">${icon("close", "sm")}</button></div>`).join("")}
+        ${n < f.max ? `<label class="photo add" aria-label="Добавить фото"><input type="file" accept="image/jpeg,image/png" ${f.max > 1 ? "multiple" : ""} data-file="craft">${icon("upload", "lg")}</label>` : ""}</div></div>`;
+  }
+  if (f.type === "select") {
+    return `<div class="field">${lbl()}<div class="chips wrap">${f.options.map(([k, t]) =>
+      `<button class="chip ${k === v ? "on" : ""}" data-act="craft-set" data-k="${f.key}" data-v="${esc(k)}">${esc(t)}</button>`).join("")}</div></div>`;
+  }
+  if (f.type === "multi") {
+    return `<div class="field">${lbl()}<div class="chips wrap">${f.options.map(([k, t]) =>
+      `<button class="chip ${v.includes(k) ? "on" : ""}" data-act="craft-toggle" data-k="${f.key}" data-v="${esc(k)}">${v.includes(k) ? icon("check", "sm") : ""}${esc(t)}</button>`).join("")}</div></div>`;
+  }
+  if (f.type === "lines") {
+    const n = v.split("\n").filter((x) => x.trim()).length;
+    return `<div class="field">${lbl(`<span class="muted tabular ${n > f.max_items ? "over" : ""}">${n} из ${f.max_items}</span>`)}
+      <textarea class="input" rows="4" maxlength="${f.max_items * (f.max_chars + 1)}" placeholder="${esc(f.placeholder || "")}" data-model="craft.values.${f.key}">${esc(v)}</textarea>
+      <span class="hint">До ${f.max_chars} символов в строке — длинный текст Тюша аккуратно уменьшит.</span></div>`;
+  }
+  if (f.type === "text") {
+    return `<label class="field">${lbl(`<span class="muted tabular">${v.length}/${f.max}</span>`)}
+      <input class="input" type="text" maxlength="${f.max}" placeholder="${esc(f.placeholder || "")}" value="${esc(v)}" data-model="craft.values.${f.key}" autocomplete="off"></label>`;
+  }
+  if (f.type === "textarea") {
+    return `<label class="field">${lbl(`<span class="muted tabular">${v.length}/${f.max}</span>`)}
+      <textarea class="input" rows="4" maxlength="${f.max}" placeholder="${esc(f.placeholder || "")}" data-model="craft.values.${f.key}">${esc(v)}</textarea></label>`;
+  }
+  if (f.type === "number") {
+    return `<div class="field"><div class="row" style="justify-content:space-between">${lbl()}
+      <div class="stepper"><button data-act="craft-step" data-k="${f.key}" data-d="-1" aria-label="Меньше" ${v <= f.min ? "disabled" : ""}>${icon("minus")}</button>
+      <output class="tabular">${v}</output><button data-act="craft-step" data-k="${f.key}" data-d="1" aria-label="Больше" ${v >= f.max ? "disabled" : ""}>${icon("plus")}</button></div></div></div>`;
+  }
+  if (f.type === "back") {
+    return `<div class="h-section"><h2>${esc(f.label)} <span class="muted" style="font-weight:500">· ${esc(backTitle(v))}</span></h2></div>
+      <div class="backs" role="radiogroup" aria-label="${esc(f.label)}">${BACKS.map((b) => `<button class="back-opt ${b.key === v ? "on" : ""}" role="radio"
+        aria-checked="${b.key === v}" data-act="craft-set" data-k="${f.key}" data-v="${b.key}">${cardBack(b.key)}<span>${esc(b.title)}</span></button>`).join("")}</div>`;
+  }
+  if (f.type === "csv") {
+    return `<div class="field">${lbl()}
+      <div class="card flat csv-box"><div class="row"><span class="tile-icon">${icon("doc")}</span><div class="grow">
+        <div style="font-weight:600">${c.csv ? esc(c.csv.name) : "Таблица не выбрана"}</div>
+        <div class="small muted">${c.csv && c.pv?.rows ? `${c.pv.rows} ${plural(c.pv.rows, "строка", "строки", "строк")}, ${c.pv.count} карт` : "Столбцы: название, текст, картинка, количество, цвет, тип"}</div></div>
+        <label class="btn soft sm" style="position:relative;overflow:hidden">${c.csv ? "Заменить" : "Выбрать CSV"}<input type="file" accept=".csv,text/csv,text/plain" data-file="csv" style="position:absolute;inset:0;opacity:0"></label></div></div>
+      <a class="small" href="${esc(f.sample || "sample_game.csv")}" download>Скачать образец таблицы</a></div>`;
+  }
+  return "";
+}
+
+SCREENS.craft = () => {
+  const c = state.craft, spec = craftSpec(c.key);
+  const pv = c.pv;
+  const q = quoteCraft(c);
+  const bad = c.photos.filter(lowRes).length;
+  return {
+    html: `${topbar(spec.title, c.loading ? "Тюша обновляет образец…" : "")}
+    ${steps(["Макет", "Проверка", "Заказ"], 0)}
+    <div class="card craft-preview" style="background:${artBg[CRAFT_ART[c.key]] || "#EEF1F7"};box-shadow:none">
+      ${craftPreviewArt(c, spec)}
+      ${pv && !pv.invalid ? `<div class="small muted" style="text-align:center">${pv.count} шт. · ${pv.sheets} ${plural(pv.sheets, "лист", "листа", "листов")} A4${spec.duplex ? ", с двух сторон" : ""}</div>` : ""}
+    </div>
+    ${pv?.invalid ? `<div class="notice info">${icon("info")}<div><b>${esc(pv.invalid)}</b><span>Как только всё будет готово, Тюша покажет образец и цену.</span></div></div>` : ""}
+    ${c.err ? `<div class="notice warn">${icon("warn")}<div><b>Образец не обновился</b><span>${esc(c.err)}</span></div></div>` : ""}
+    ${(pv?.warnings || []).map((w) => `<div class="notice warn">${icon("warn")}<div><span>${esc(w)}</span></div></div>`).join("")}
+    ${bad ? `<div class="notice warn">${icon("warn")}<div><b>${bad} ${plural(bad, "фото", "фото", "фото")} с низким разрешением</b><span>Можно улучшить нейросетью на следующем шаге.</span></div></div>` : ""}
+    ${spec.fields.map((f) => craftField(c, f)).join("")}`,
+    dock: dockBar(q.valid ? q.total : null, c.loading ? "Обновляем…" : "Проверить заказ", "review-craft", { disabled: !q.valid }),
+  };
+};
+
+function craftRows(c, spec) {
+  const rows = [["Изделие", spec.title]];
+  if (c.pv && !c.pv.invalid) rows.push(["Количество", `${c.pv.count} шт.`], ["Листов A4", String(c.pv.sheets) + (spec.duplex ? " (двусторонние)" : "")]);
+  spec.fields.forEach((f) => {
+    const v = c.values[f.key];
+    if (f.type === "photos") rows.push(["Фото", String(c.photos.length)]);
+    else if (f.type === "select") rows.push([f.label, (f.options.find((o) => o[0] === v) || [])[1] || ""]);
+    else if (f.type === "multi") rows.push([f.label, f.options.filter((o) => v.includes(o[0])).map((o) => o[1].split(" · ")[0]).join(", ") || "—"]);
+    else if (f.type === "back") rows.push([f.label, backTitle(v)]);
+    else if (f.type === "number") rows.push([f.label, String(v)]);
+    else if (f.type === "csv") rows.push([f.label, c.csv?.name || "—"]);
+    else if (v) rows.push([f.label.replace(/ \(.*\)$/, "").replace(/ — .*$/, ""), f.type === "lines" ? `${v.split("\n").filter((x) => x.trim()).length} шт.` : v]);
+  });
+  return rows;
+}
+
+// Арт для карточек изделий в каталоге
+function craftArt(key, sample) {
+  if (key === "wishes") return `<div class="fan">${["Завтрак в постель", "Танец под нашу песню", "Вечер без телефонов"].map((t) =>
+    `<div class="pc q wish"><b>♥</b><small>Я желаю</small><span>${esc(t)}</span></div>`).join("")}</div>`;
+  if (key === "stickers") return `<div class="stk">${[0, 1, 2].map((i) => `<i style="${photoStyle(sample(i))}"></i>`).join("")}</div>`;
+  if (key === "calendar") return `<div class="fan" style="aspect-ratio:210/297;width:42%"><div class="page cal"><i style="${photoStyle(sample(2))}"></i>
+    <b class="m">Май</b><span class="grid">${Array.from({ length: 28 }, (_, i) => `<em class="${i % 7 > 4 ? "we" : ""}"></em>`).join("")}</span></div></div>`;
+  if (key === "postcards") return `<div class="fan" style="aspect-ratio:100/140;width:40%">
+    <div class="pc post back-side"><span></span><span></span><span></span></div>
+    <div class="pc post"><i style="${photoStyle(sample(0))}"></i><em>С днём рождения!</em></div></div>`;
+  if (key === "box") return `<div class="boxart"><div class="side"></div><div class="front"><i style="${photoStyle(sample(1))}"></i><em>Наша колода</em></div></div>`;
+  if (key === "game") return `<div class="fan">${[["Дракон", "#D84B4B"], ["Зелье", "#3F9E5B"], ["Ловушка", "#8457C9"]].map(([t, col], i) =>
+    `<div class="pc game" style="--gc:${col}"><b>${t}</b><i style="${photoStyle(sample(i))}"></i><span></span><span></span></div>`).join("")}</div>`;
+  return "";
+}
+
 
 SCREENS.home = () => {
   const hour = new Date().getHours();
@@ -563,6 +942,8 @@ SCREENS.home = () => {
     </button>` : ""}
     <div class="h-section"><h2>Популярное</h2><a href="#" data-act="tab" data-tab="catalog">Весь каталог</a></div>
     <div class="hscroll">${PRODUCTS.filter((p) => p.cat === "cards").map(productCard).join("")}</div>
+    ${PRODUCTS.some((p) => p.cat === "gifts") ? `<div class="h-section"><h2>Подарки из фото</h2><a href="#" data-act="gifts-catalog">Все</a></div>
+    <div class="hscroll">${PRODUCTS.filter((p) => p.cat === "gifts").map(productCard).join("")}</div>` : ""}
   ` };
 };
 
@@ -581,7 +962,7 @@ function productCard(p) {
 }
 
 SCREENS.catalog = () => {
-  const cats = [["all", "Все"], ["cards", "Карты"], ["photo", "Фото"], ["doc", "Документы"]];
+  const cats = [["all", "Все"], ["cards", "Карты"], ["gifts", "Подарки"], ["photo", "Фото"], ["doc", "Документы"]];
   const q = state.q.trim().toLowerCase();
   const list = PRODUCTS.filter((p) => (state.catCat === "all" || p.cat === state.catCat) &&
     (!q || (p.title + " " + p.sub).toLowerCase().includes(q)));
@@ -599,7 +980,7 @@ SCREENS.product = ({ id }) => {
   const p = byId(id);
   const a = availability(p);
   const isCards = p.cat === "cards";
-  const cta = isCards ? ["Собрать колоду", "start-deck"] : p.cat === "doc" ? ["Выбрать файл", "go-doc"] : ["Выбрать фото", "go-photo"];
+  const cta = isCards ? ["Собрать колоду", "start-deck"] : p.cat === "gifts" ? ["Создать", "start-craft"] : p.cat === "doc" ? ["Выбрать файл", "go-doc"] : ["Выбрать фото", "go-photo"];
   return {
     html: `${topbar(p.title)}
     <div class="card" style="padding:0;overflow:hidden"><div class="product" style="box-shadow:none;border-radius:0">
@@ -613,9 +994,9 @@ SCREENS.product = ({ id }) => {
       `<div class="list-item"><span class="tile-icon">${icon(ic)}</span><span class="t">${esc(t)}</span></div>`).join("")}</div></div>` : ""}
     ${p.reqs ? `<div class="card"><div class="eyebrow">${p.cat === "doc" ? "Требования к файлу" : "Требования к фото"}</div><div class="list">${p.reqs.map((t) =>
       `<div class="list-item"><span style="color:var(--ok);--ic2:var(--ok)">${icon("check", "sm")}</span><span>${esc(t)}</span></div>`).join("")}</div></div>` : ""}
-    <div class="card flat"><div class="row"><span class="tile-icon">${icon("clock")}</span><div class="grow"><div style="font-weight:600">Печатаем после заказа</div>
+    <div class="card flat"><div class="row"><span class="tile-icon">${icon("clock")}</span><div class="grow"><div style="font-weight:600">${a.ok ? "Печатаем после заказа" : "Сейчас закончилась бумага — скоро пополним"}</div>
       <div class="small muted">Напишем в Telegram, когда заказ будет готов.</div></div></div></div>`,
-    dock: dockBar(p.price ?? null, cta[0], cta[1], { sub: "Стоимость" }),
+    dock: dockBar(p.price ?? null, a.ok ? cta[0] : "Временно недоступно", cta[1], { sub: "Стоимость", disabled: !a.ok }),
   };
 };
 
@@ -689,7 +1070,10 @@ SCREENS.deck = () => {
         <span class="n">${i + 1}</span>${lowRes(ph) ? `<span class="bad">${icon("warn")}</span>` : ""}</button>`).join("")}
       ${dk.photos.length < maxPhotos ? `<label class="photo add" aria-label="Добавить фото"><input type="file" id="deck-files" accept="image/jpeg,image/png" multiple data-file="deck">${icon("upload", "lg")}</label>` : ""}</div>
     <div class="small muted">${state.swapFrom != null ? "Теперь нажмите на фото, с которым поменять местами." : `Нажмите на два фото, чтобы поменять их местами. ${uno ? "Фото ложатся на карты с цифрами по очереди." : "Фото ложатся на карты по очереди."}`}</div>
-    ${bad ? `<div class="notice warn">${icon("warn")}<div><b>${bad} ${plural(bad, "фото", "фото", "фото")} с низким разрешением</b><span>Отмечены значком. На карте 63×88 мм такое фото может выйти нерезким.</span></div></div>` : ""}
+    ${bad ? `<div class="notice warn">${icon("warn")}<div><b>${bad} ${plural(bad, "фото", "фото", "фото")} с низким разрешением</b><span>Отмечены значком. На карте 63×88 мм такое фото может выйти нерезким — на следующем шаге его можно улучшить нейросетью.</span></div></div>` : ""}
+    ${(() => { const asp = uno ? .7 : dk.style === "full" ? 63 / 88 : dk.style === "vintage" ? .62 : 42 / 61;
+      const cut = dk.photos.filter((ph) => faceCut(ph, asp)).length;
+      return cut ? `<div class="notice info">${icon("info")}<div><b>На ${cut} ${plural(cut, "фото", "фото", "фото")} лица крупные</b><span>Тюша держит лица в центре кадра, но такие могут обрезаться по краям. Лучше снимки чуть издалека.</span></div></div>` : ""; })()}
     ${uno ? "" : `<div class="h-section"><h2>Оформление</h2></div>
     <div class="styles" role="radiogroup" aria-label="Оформление карт">${STYLES.map((st) => `<button class="style-opt ${st.key === dk.style ? "on" : ""}" role="radio"
       aria-checked="${st.key === dk.style}" data-act="set" data-model="deck.style" data-value="${st.key}">
@@ -732,22 +1116,36 @@ function reviewData() {
           ? [["Надпись", [unoClean(dk.backText, UNO.text_max).toUpperCase(), unoClean(dk.backCaption, UNO.caption_max)].filter(Boolean).join(" · ")]] : []),
         ...(isUno(p.id) && dk.backPhoto ? [["Фото на рубашке", "своё"]] : [])],
       warns, agree: "Макет проверен. После оформления заказ уйдёт оператору.",
-      art: `<div class="row" style="gap:8px;justify-content:center"><div style="width:28%">${isUno(p.id) ? unoBack(dk, "position:relative;aspect-ratio:63/88") : cardBack(dk.back, "position:relative;aspect-ratio:63/88")}</div>${(isUno(p.id) ? deckLayout(dk).filter((c, i) => i === 1 || c.rank === "reverse").slice(0, 2) : deckLayout(dk).slice(0, 2)).map((c) => c.uno
-        ? `<div style="width:28%">${unoCard({ ...c, style: "position:relative;aspect-ratio:63/88" })}</div>`
-        : c.memo
-        ? `<div class="pc memo" style="width:30%;position:relative"><div class="win" style="${photoStyle(c.ph)};inset:8%"></div></div>`
-        : `<div style="width:28%">${playingCard({ rank: c.rank, suit: c.suit, ph: c.ph, full: c.full, ink: c.ink, vintage: c.vintage, zoom: c.o.zoom || 1, x: c.o.x ?? 50, y: c.o.y ?? 50, style: "position:relative;aspect-ratio:63/88" })}</div>`).join("")}</div>` };
+      paper: ["deck.paper", PAPER_CHOICES.cards, dk.paper, deckSheets(dk)], enhance: ["deck.enhance", dk.photos, dk.enhance],
+      art: (() => {
+        const lay = deckLayout(dk);
+        const c = isUno(p.id) ? lay.find((x) => x.ph) || lay[1] : lay.find((x) => x.rank === "Д" || x.rank === "Т") || lay[0];
+        const front = c.uno ? unoCard({ ...c, style: "position:absolute;inset:0" })
+          : playingCard({ rank: c.rank, suit: c.suit, ph: c.ph, full: c.full, ink: c.ink, vintage: c.vintage, zoom: c.o.zoom || 1, x: c.o.x, y: c.o.y, style: "position:absolute;inset:0" });
+        const back = isUno(p.id) ? unoBack(dk, "position:absolute;inset:0") : cardBack(dk.back, "position:absolute;inset:0");
+        return flip3d(front, back);
+      })() };
   }
   if (r.kind === "doc") {
     const d = state.docJob, p = byId("doc"), q = quoteDoc(d);
-    return { p, q, title: "Документ", flow: ["Файл", "Настройки", "Проверка", "Заказ"],
+    return { p, q, title: "Документ", flow: ["Файл", "Настройки", "Проверка", "Заказ"], paper: ["docJob.paper", PAPER_CHOICES.doc, d.paper, d.pages * d.copies],
       rows: [["Файл", d.name], ["Страниц", String(d.pages)], ["Копии", String(d.copies)], ["Цвет", d.color ? "цветная" : "чёрно-белая"]],
       warns: [["info", "Листы A4", "Страницы вписываются в лист с небольшими полями; альбомные поворачиваем."]],
       agree: "Файл и параметры печати проверены." };
   }
+  if (r.kind === "craft") {
+    const c = state.craft, spec = craftSpec(c.key), p = byId(c.key), q = quoteCraft(c);
+    const bad = c.photos.filter(lowRes).length;
+    const warns = (c.pv?.warnings || []).map((w) => ["warn", "Обратите внимание", w]);
+    if (bad) warns.push(["warn", `${bad} ${plural(bad, "фото", "фото", "фото")} с низким разрешением`, "Может выйти нерезко — включите улучшение ниже или замените фото."]);
+    return { p, q, title: spec.title, flow: ["Макет", "Проверка", "Заказ"], rows: craftRows(c, spec), warns,
+      paper: ["craft.paper", spec.papers, c.paper, c.pv?.sheets || 1], enhance: ["craft.enhance", c.photos, c.enhance],
+      agree: "Макет проверен. После оформления заказ уйдёт оператору.", art: craftPreviewArt(c, spec) };
+  }
   const j = state.photoJob, p = byId("photo"), q = quotePhoto(j);
   const bad = j.photos.filter(lowRes).length;
   return { p, q, title: `Фото ${FORMAT_NAMES[j.format]}`, flow: ["Фото", "Настройки", "Проверка", "Заказ"],
+    paper: ["photoJob.paper", PAPER_CHOICES.photo, j.paper, photoSheets(j)], enhance: ["photoJob.enhance", j.photos, j.enhance],
     rows: [["Фото", String(j.photos.length)], ["Размер", FORMAT_NAMES[j.format]], ["Копии", String(j.copies)], ["Цвет", j.color ? "цветная" : "чёрно-белая"], ["Качество", QUALITY_NAMES[j.quality]]],
     warns: bad ? [["warn", `${bad} ${plural(bad, "фото", "фото", "фото")} с низким разрешением`, "Может выйти нерезко."]] : [],
     agree: "Фото и параметры печати проверены." };
@@ -758,14 +1156,16 @@ SCREENS.review = () => {
   return {
     html: `${topbar("Проверка заказа")}
     ${steps(r.flow, 2)}
-    ${r.art ? `<div class="card" style="background:${artBg[r.p.art]};box-shadow:none;padding:20px">${r.art}</div>` : ""}
+    ${r.art ? `<div class="card review-art" style="background:${artBg[r.p.art] || "#EEF1F7"};box-shadow:none;padding:22px 20px">${r.art}</div>` : ""}
     ${r.warns.map(([tone, t, s]) => `<div class="notice ${tone}">${icon(tone === "warn" ? "warn" : "info")}<div><b>${esc(t)}</b><span>${esc(s)}</span></div></div>`).join("")}
     <div class="notice info">${icon("info")}<div><b>Оплаты в приложении пока нет</b><span>Заказ уйдёт оператору, о стоимости и получении он напишет в Telegram.</span></div></div>
+    ${r.paper ? paperPicker(...r.paper) : ""}
+    ${r.enhance ? enhanceBlock(...r.enhance) : ""}
     <div class="card"><div class="eyebrow">Заказ</div><dl class="kv">${r.rows.map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join("")}</dl></div>
     <div class="card"><div class="eyebrow">Стоимость</div><dl class="kv">${r.q.lines.map(([k, v]) => `<dt>${esc(k)}</dt><dd>${rub(v)}</dd>`).join("")}
       <span class="sep"></span><dt class="total">Итого</dt><dd class="total">${rub(r.q.total)}</dd></dl></div>
     <button class="check" role="checkbox" aria-checked="${state.agreed}" data-act="agree"><span class="box">${icon("check")}</span><span>${esc(r.agree)}</span></button>`,
-    dock: dockBar(r.q.total, state.agreed ? "Оформить заказ" : "Отметьте проверку", "place-order", { disabled: !state.agreed }),
+    dock: dockBar(r.q.total, state.agreed ? "Оформить заказ" : "Отметьте проверку", "place-order", { disabled: !state.agreed || r.q.valid === false }),
   };
 };
 
@@ -1002,8 +1402,32 @@ const ACT = {
     render();
   },
   "uno-back-photo-off": () => { state.deck.backPhoto = null; haptic("select"); render(); },
+  "gifts-catalog": () => { state.tab = "catalog"; state.catCat = "gifts"; state.stack = []; render("tab"); window.scrollTo(0, 0); },
+  "start-craft": () => { const id = current().params.id; if (startCraft(id)) push("craft"); },
+  "review-craft": () => { state.review = { kind: "craft" }; state.agreed = false; push("review"); },
+  "craft-set": (el) => { state.craft.values[el.dataset.k] = el.dataset.v; haptic("select"); queuePreview(120); render(); },
+  "craft-toggle": (el) => {
+    const arr = state.craft.values[el.dataset.k], v = el.dataset.v;
+    state.craft.values[el.dataset.k] = arr.includes(v) ? arr.filter((x) => x !== v) : [...arr, v];
+    haptic("select"); queuePreview(250); render();
+  },
+  "craft-step": (el) => {
+    const f = craftSpec(state.craft.key).fields.find((x) => x.key === el.dataset.k);
+    const v = Math.min(f.max, Math.max(f.min, (+state.craft.values[f.key] || 0) + +el.dataset.d));
+    state.craft.values[f.key] = v; haptic("select"); queuePreview(300); render();
+  },
+  "craft-remove": (el) => { state.craft.photos.splice(+el.dataset.i, 1); haptic("medium"); queuePreview(150); render(); },
+  toggle: (el) => {
+    const keys = el.dataset.model.split(".");
+    let obj = state;
+    keys.slice(0, -1).forEach((k) => { obj = obj[k]; });
+    obj[keys.at(-1)] = !obj[keys.at(-1)];
+    haptic("select");
+    render();
+  },
   set: (el) => {
     setPath(el.dataset.model, el.dataset.value);
+    if (el.dataset.model.startsWith("craft.")) queuePreview(150);
     if (el.dataset.model === "theme") { store("theme", state.theme); applyTheme(); }
     if (/^(photoJob|docJob)\./.test(el.dataset.model)) state.agreed = false;
     haptic("select");
@@ -1018,8 +1442,8 @@ const ACT = {
   },
   "cards-catalog": () => { state.tab = "catalog"; state.catCat = "cards"; state.stack = []; render("tab"); window.scrollTo(0, 0); },
   "clear-search": () => { state.q = ""; state.catCat = "all"; render(); },
-  "go-photo": () => { state.photoJob = state.photoJob || { photos: [], format: "10x15", copies: 1, color: true, quality: "high" }; push("photo"); },
-  "go-doc": () => { state.docJob = state.docJob || { file: null, name: "", pages: 0, copies: 1, color: false, checking: false, error: "" }; push("doc"); },
+  "go-photo": () => { state.photoJob = state.photoJob || { photos: [], format: "10x15", copies: 1, color: true, quality: "high", paper: pickPaper(PAPER_CHOICES.photo), enhance: false }; push("photo"); },
+  "go-doc": () => { state.docJob = state.docJob || { file: null, name: "", pages: 0, copies: 1, color: false, checking: false, error: "", paper: pickPaper(PAPER_CHOICES.doc) }; push("doc"); },
   "review-doc": () => { state.review = { kind: "doc" }; state.agreed = false; push("review"); },
   "start-deck": () => { const id = current().params.id; startDeck(id); push("deck"); },
   "continue-draft": () => { startDeck(state.draft.pid, state.draft.photos); push("deck"); },
@@ -1063,7 +1487,8 @@ const ACT = {
   },
   repeat: (el) => {
     const o = state.orders.find((x) => x.id === +el.dataset.id);
-    if (o.kind === "cards") { startDeck(o.title.includes("UNO") ? "uno" : o.title.includes("36") || o.sub.startsWith("36") ? "deck36" : "deck54"); push("deck"); }
+    if (o.kind === "craft") { if (startCraft(o.product)) push("craft"); }
+    else if (o.kind === "cards") { startDeck(o.title.includes("UNO") ? "uno" : o.title.includes("36") || o.sub.startsWith("36") ? "deck36" : "deck54"); push("deck"); }
     else if (o.kind === "doc") ACT["go-doc"]();
     else ACT["go-photo"]();
     toast(o.kind === "doc" ? "Выберите файл — это будет новый заказ" : "Добавьте фото — это будет новый заказ");
@@ -1077,7 +1502,8 @@ const ACT = {
 function startDeck(pid, photosCount) {
   if (!state.deck || state.deck.pid !== pid) {
     state.deck = { pid, photos: [], edits: {}, saved: false, back: defaultBackFor(pid), style: DEFAULT_STYLE,
-      palette: UNO.default_palette, colors: unoPaletteColors(UNO.default_palette), backText: "", backCaption: "", backPhoto: null };
+      palette: UNO.default_palette, colors: unoPaletteColors(UNO.default_palette), backText: "", backCaption: "", backPhoto: null,
+      paper: pickPaper(PAPER_CHOICES.cards), enhance: false };
   }
   state.swapFrom = null;
 }
@@ -1142,6 +1568,10 @@ async function loadConfig() {
     if (Array.isArray(c.backs) && c.backs.length) { BACKS = c.backs; DEFAULT_BACK = c.default_back || BACKS[0].key; }
     if (c.uno && Array.isArray(c.uno.palettes)) UNO = { ...UNO, ...c.uno, inks: { ...UNO.inks, ...Object.fromEntries(Object.entries(c.uno.inks || {}).map(([k, v]) => [k, { ...UNO.inks[k], ...v }])) } };
     if (Array.isArray(c.uno_backs) && c.uno_backs.length) { UNO_BACKS = c.uno_backs; UNO_DEFAULT_BACK = c.uno_default_back || UNO_BACKS[0].key; }
+    if (c.papers) PAPERS = c.papers;
+    if (c.paper_choices) PAPER_CHOICES = c.paper_choices;
+    if (c.enhance) ENH = c.enhance;
+    if (Array.isArray(c.crafts)) registerCrafts(c.crafts);
     if (Array.isArray(c.styles) && c.styles.length) { STYLES = c.styles; DEFAULT_STYLE = c.default_style || STYLES[0].key; }
     PRODUCTS.forEach((p) => { if (PRICES.cards[p.id]) p.price = PRICES.cards[p.id]; });
     const min = Math.min(...Object.values(PRICES.photo).flatMap((f) => Object.values(f)));
@@ -1169,12 +1599,15 @@ async function prepareUpload(ph, maxSide) {
 async function placeOrder() {
   if (state.placing) return;
   const r = state.review;
-  const isDeck = r.kind === "deck", isDoc = r.kind === "doc";
-  const list = isDoc ? [] : isDeck ? state.deck.photos : state.photoJob.photos;
-  const meta = isDoc ? { kind: "doc", copies: state.docJob.copies, color: state.docJob.color }
+  const isDeck = r.kind === "deck", isDoc = r.kind === "doc", isCraft = r.kind === "craft";
+  const list = isDoc ? [] : isDeck ? state.deck.photos : isCraft ? state.craft.photos : state.photoJob.photos;
+  const meta = isDoc ? { kind: "doc", copies: state.docJob.copies, color: state.docJob.color, paper: state.docJob.paper }
     : isDeck ? { kind: "cards", deck: state.deck.pid, back: state.deck.back || DEFAULT_BACK, style: state.deck.style || DEFAULT_STYLE,
+      paper: state.deck.paper, enhance: state.deck.enhance,
       ...(isUno(state.deck.pid) ? { colors: state.deck.colors, back_text: state.deck.backText, back_caption: state.deck.backCaption } : {}) }
-    : { kind: "photo", format: state.photoJob.format, copies: state.photoJob.copies, color: state.photoJob.color, quality: state.photoJob.quality };
+    : isCraft ? { kind: "craft", product: state.craft.key, ...state.craft.values, paper: state.craft.paper, enhance: state.craft.enhance }
+    : { kind: "photo", format: state.photoJob.format, copies: state.photoJob.copies, color: state.photoJob.color, quality: state.photoJob.quality,
+      paper: state.photoJob.paper, enhance: state.photoJob.enhance };
   state.placing = true;
   state.uploadPct = 5;
   state.stack.push({ name: "placing", params: {} });
@@ -1184,9 +1617,11 @@ async function placeOrder() {
     form.append("meta", JSON.stringify(meta));
     if (isDoc) form.append("document", state.docJob.file, state.docJob.name);
     if (isDeck && isUno(state.deck.pid) && state.deck.backPhoto) form.append("back_photo", await prepareUpload(state.deck.backPhoto, 2200), "back.jpg");
-    const maxSide = isDeck ? 2200 : 3600;
+    if (isCraft && state.craft.csv) form.append("csv", new Blob([state.craft.csv.text], { type: "text/csv" }), state.craft.csv.name);
+    const maxSide = isDeck ? 2200 : isCraft ? 2600 : 3600;
     for (let i = 0; i < list.length; i++) {
-      form.append("photo", await prepareUpload(list[i], maxSide), `photo_${i + 1}.jpg`);
+      // у изделий имя файла важно: в таблице карт для игры картинки ищутся по имени
+      form.append("photo", await prepareUpload(list[i], maxSide), isCraft ? list[i].name : `photo_${i + 1}.jpg`);
       state.uploadPct = 5 + Math.round((i + 1) / list.length * 60);
       if (current().name === "placing") render();
     }
@@ -1196,7 +1631,7 @@ async function placeOrder() {
     const o = mapOrder(order);
     state.orders.unshift(o);
     loadThumb(o).then(() => render());
-    if (isDoc) state.docJob = null; else if (isDeck) { state.draft = null; state.deck = null; } else state.photoJob = null;
+    if (isDoc) state.docJob = null; else if (isDeck) { state.draft = null; state.deck = null; } else if (isCraft) state.craft = null; else state.photoJob = null;
     state.agreed = false;
     state.stack = [{ name: "success", params: { id: o.id } }];
     haptic("success");
@@ -1246,8 +1681,36 @@ async function onPhotoFiles(files, target) {
     const url = URL.createObjectURL(f);
     const [w, h] = await imageSize(url);
     state.deck.backPhoto = { url, w, h, name: f.name, file: f };
+    detectFace(state.deck.backPhoto);
     haptic("success");
     return render();
+  }
+  if (target === "csv") {
+    const f = files[0];
+    if (f.size > 512 * 1024) return toast("Таблица больше 512 КБ", "no");
+    const buf = await f.arrayBuffer();
+    let text = new TextDecoder("utf-8").decode(buf);
+    if (text.includes("\uFFFD")) text = new TextDecoder("windows-1251").decode(buf);  // таблица из Excel
+    state.craft.csv = { name: f.name, text };
+    haptic("success");
+    queuePreview(50);
+    return render();
+  }
+  if (target === "craft") {
+    const spec = craftSpec(state.craft.key), max = spec.fields.find((x) => x.type === "photos")?.max || 1;
+    for (const f of [...files].filter((x) => /image\/(jpeg|png)/.test(x.type))) {
+      if (state.craft.photos.length >= max) { toast(`Не больше ${max} фото`, "no"); break; }
+      if (f.size > 20 * 1048576) { toast(`${f.name}: больше 20 МБ`, "no"); continue; }
+      const url = URL.createObjectURL(f);
+      const [w, h] = await imageSize(url);
+      const ph = { url, w, h, name: f.name, file: f };
+      state.craft.photos.push(ph);
+      detectFace(ph);
+      render();
+    }
+    haptic("success");
+    queuePreview(200);
+    return;
   }
   const list = [...files].filter((f) => /image\/(jpeg|png)/.test(f.type));
   if (list.length < files.length) toast("Часть файлов пропущена: принимаем JPG и PNG", "no");
@@ -1256,6 +1719,7 @@ async function onPhotoFiles(files, target) {
     const url = URL.createObjectURL(f);
     const [w, h] = await imageSize(url);
     const ph = { url, w, h, name: f.name, file: f, lum: target === "deck" ? await cornerLuminance(url) : undefined };
+    detectFace(ph);
     if (target === "deck") {
       const max = byId(state.deck.pid).maxPhotos || byId(state.deck.pid).cards;
       if (state.deck.photos.length >= max) break;
@@ -1287,6 +1751,7 @@ document.addEventListener("input", (e) => {
   if (el.dataset.model) {
     setPath(el.dataset.model, el.value);
     if (el.dataset.model.startsWith("deck.colors.")) state.deck.palette = "custom";
+    if (el.dataset.model.startsWith("craft.")) queuePreview(600);
     render();
     return;
   }

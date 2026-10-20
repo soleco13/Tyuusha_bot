@@ -676,7 +676,7 @@ function renderDrawer(full) {
     </div>`;
   drawer.querySelectorAll("[data-action]").forEach((b) => b.addEventListener("click", () => doAction(state.detail, b.dataset.action, b)));
   drawer.querySelector("[data-content]").innerHTML = `
-    ${o.description.map((line) => { const [k, ...v] = line.replace(/^[🃏🖼]\s*/u, "").split(": "); return v.length ? `<dt>${esc(k)}</dt><dd>${esc(v.join(": "))}</dd>` : `<dt>Что</dt><dd>${esc(k)}</dd>`; }).join("")}
+    ${o.description.map((line) => { const [k, ...v] = line.replace(/^(🃏|🖼|🎁|📄)\s*/u, "").split(": "); return v.length ? `<dt>${esc(k)}</dt><dd>${esc(v.join(": "))}</dd>` : `<dt>Что</dt><dd>${esc(k)}</dd>`; }).join("")}
     <dt>Стоимость</dt><dd><b>${esc(o.amount_text)}</b> <span class="muted small">· оплата пока не подключена</span></dd>
     <dt>Создан</dt><dd>${esc(fullTime(o.created_at))}</dd>
     ${o.printed_at ? `<dt>Напечатан</dt><dd>${esc(fullTime(o.printed_at))}</dd>` : ""}
