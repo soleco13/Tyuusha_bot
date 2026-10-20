@@ -145,6 +145,12 @@ def stats_since(day: str) -> tuple[int, int]:
     return row[0], row[1]
 
 
+def orders_since(day: str) -> list[dict]:
+    """Все заказы, созданные начиная с дня day (YYYY-MM-DD) — для статистики."""
+    with _lock:
+        return [_row(r) for r in _conn.execute("SELECT * FROM orders WHERE created_at >= ? ORDER BY id", (day,))]
+
+
 def orders_in(statuses: tuple[str, ...]) -> list[dict]:
     with _lock:
         marks = ", ".join("?" for _ in statuses)

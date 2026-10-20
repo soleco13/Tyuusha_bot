@@ -33,6 +33,7 @@ PROFILES = {
     "cards": "Игральные карты (картон 300 г/м²)",
     "photo": "Фото (фотобумага)",
     "doc": "Документы (обычная бумага)",
+    "stickers": "Наклейки (самоклеящаяся бумага)",
 }
 for _key, _title in PROFILES.items():
     db.ensure_profile(_key, _title)

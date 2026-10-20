@@ -5,6 +5,7 @@ from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageOps
 
+import photoai
 from cards import A4, DPI, load_photo, mm
 
 # формат -> (ширина, высота слота в мм, слотов на лист A4)
@@ -30,7 +31,8 @@ def _fit_into(photo: Image.Image, size: tuple[int, int]) -> Image.Image:
     # поворачиваем фото под ориентацию слота, чтобы обрезать как можно меньше
     if (photo.width > photo.height) != (size[0] > size[1]):
         photo = photo.rotate(90, expand=True)
-    return ImageOps.fit(photo, size, Image.LANCZOS)
+        photo.info.pop("face_box", None)  # после поворота лица ищем заново
+    return photoai.fit(photo, size, (0.5, 0.5))
 
 
 def build_photo_pages(photo_paths: list[Path], fmt: str, copies: int, grayscale: bool,

@@ -13,8 +13,9 @@ import re
 from functools import lru_cache
 from pathlib import Path
 
-from PIL import Image, ImageChops, ImageDraw, ImageFilter, ImageFont, ImageOps
+from PIL import Image, ImageChops, ImageDraw, ImageFilter, ImageFont
 
+import photoai
 from cards import (ASSET_FONTS, CARD_H, CARD_W, DPI, PER_SHEET, Card, _heart, _shape, layout_sheet, load_photo,
                    mm)
 
@@ -270,7 +271,7 @@ _CURRENT_BASES: list = []
 
 def _fit_into(photo: Image.Image, mask: Image.Image, img: Image.Image) -> None:
     bbox = mask.getbbox()
-    fitted = ImageOps.fit(photo, (bbox[2] - bbox[0], bbox[3] - bbox[1]), Image.LANCZOS, centering=(0.5, 0.42))
+    fitted = photoai.fit(photo, (bbox[2] - bbox[0], bbox[3] - bbox[1]))
     holder = Image.new("RGB", img.size)
     holder.paste(fitted, bbox[:2])
     img.paste(holder, (0, 0), mask)

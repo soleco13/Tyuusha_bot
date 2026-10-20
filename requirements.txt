@@ -3,3 +3,7 @@ pillow>=10.4
 python-dotenv>=1.0
 pywin32>=306; sys_platform == "win32"
 pymupdf>=1.24
+# умная обработка фото: лица, улучшение слабых фото, вырезание фона для наклеек (photoai.py)
+numpy>=1.26
+opencv-python-headless>=4.9
+onnxruntime>=1.17

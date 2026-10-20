@@ -145,6 +145,8 @@ function renderShell() {
       <nav class="nav">
         <button data-view="orders">Заказы</button>
         <button data-view="prices">Цены</button>
+        <button data-view="stock">Склад<span class="nav-badge hidden" id="stock-badge"></span></button>
+        <button data-view="stats">Статистика</button>
         <button data-view="printers">Принтеры</button>
       </nav>
       <div class="spacer"></div>
@@ -185,15 +187,17 @@ function go(view) {
   renderPage();
 }
 
+const VIEWS = ["prices", "printers", "stock", "stats"];
+
 function applyHash() {
   const h = location.hash.slice(1);
   const m = h.match(/order=(\d+)/);
-  state.view = ["prices", "printers"].includes(h) ? h : "orders";
+  state.view = VIEWS.includes(h) ? h : "orders";
   renderPage();
   if (m) openOrder(Number(m[1]));
 }
 window.addEventListener("hashchange", () => {
-  const view = ["#prices", "#printers"].includes(location.hash) ? location.hash.slice(1) : "orders";
+  const view = VIEWS.includes(location.hash.slice(1)) ? location.hash.slice(1) : "orders";
   if (view !== state.view && document.getElementById("page")) { state.view = view; renderPage(); }
   const m = location.hash.match(/order=(\d+)/);
   if (m && Number(m[1]) !== state.openId) openOrder(Number(m[1]));
@@ -204,8 +208,11 @@ function renderPage() {
   stopPrintersTimer();
   if (state.view === "prices") return renderPrices();
   if (state.view === "printers") return renderPrinters();
+  if (state.view === "stock") return renderStock();
+  if (state.view === "stats") return renderStats();
   const page = document.getElementById("page");
   page.innerHTML = `
+    <section id="stock-warn"></section>
     <section class="stats" id="stats"></section>
     <div class="toolbar">
       <div class="tabs" id="tabs"></div>
@@ -256,6 +263,7 @@ async function refresh() {
     refreshing = false;
   }
   document.getElementById("offline")?.classList.toggle("hidden", state.online);
+  renderStockWarn();
   renderSummary();
   renderList();
   renderPrinter();
@@ -279,6 +287,18 @@ function renderSync() {
   el.innerHTML = `<span class="dot ok"></span> обновлено ${s < 2 ? "только что" : s + " с назад"}`;
   const work = state.summary?.counts?.new || 0;
   document.title = (work ? `(${work}) ` : "") + "Тюша · Заказы";
+}
+
+function renderStockWarn() {
+  const low = state.summary?.stock_low || [];
+  const badge = document.getElementById("stock-badge");
+  if (badge) { badge.textContent = low.length; badge.classList.toggle("hidden", !low.length); }
+  const el = document.getElementById("stock-warn");
+  if (!el) return;
+  const out = low.filter((m) => m.state === "out");
+  el.innerHTML = low.length ? `<a class="banner ${out.length ? "error" : "warn"}" href="#stock" style="margin-bottom:14px;text-decoration:none">⚠️
+    <div>${out.length ? "Закончилось: " + out.map((m) => esc(m.title)).join(", ") : "Заканчивается: " + low.map((m) => `${esc(m.title)} (${m.stock} ${esc(m.unit)})`).join(", ")}
+    <div class="small">${out.length ? "Клиенты не смогут заказать бумагу на этом материале." : "Пора пополнить склад."} Открыть склад →</div></div></a>` : "";
 }
 
 function renderSummary() {
@@ -361,7 +381,7 @@ function renderList() {
 /** Куда уйдёт задание при печати через компьютер с принтером. */
 function routeNote(o) {
   if (state.summary?.print_mode !== "agent") return "";
-  const prof = state.summary.profiles?.[["cards", "doc"].includes(o.kind) ? o.kind : "photo"];
+  const prof = state.summary.profiles?.[o.profile || (["cards", "doc"].includes(o.kind) ? o.kind : "photo")];
   if (!prof?.agent || !prof?.printer) {
     return `<div class="banner error" style="margin-bottom:10px">⚠️ <div>Для этого материала не выбран принтер<div class="small">Откройте «Принтеры» и настройте профиль.</div></div></div>`;
   }
@@ -378,14 +398,15 @@ const ACTIONS = {
   print: {
     label: "🖨 Печать", style: "primary",
     confirm: (o) => {
-      const p = o.params || {}, cardsDeck = o.kind === "cards";
+      const p = o.params || {}, cardsDeck = o.duplex ?? o.kind === "cards";
       const sheets = p.sheets ?? "?";
+      const paper = o.paper_title ? `«${esc(o.paper_title.toLowerCase())}»` : cardsDeck ? "плотной фотобумаги (200–300 г/м²)" : o.kind === "doc" ? "обычной офисной бумаги" : "бумаги для фото";
       return {
         title: `Печать заказа №${o.id}`,
         html: `${routeNote(o)}<p>Перед печатью подготовьте принтер:</p><ol>
-          <li>Положите в лоток <b>${sheets} л. A4</b> ${cardsDeck ? "плотной фотобумаги (200–300 г/м²)" : o.kind === "doc" ? "обычной офисной бумаги" : "бумаги для фото"}.</li>
+          <li>Положите в лоток <b>${sheets} л. A4</b>: ${paper}.</li>
           <li>Проверьте, что принтер включён и чернил достаточно.</li>
-          ${cardsDeck ? "<li>Сначала печатаются лицевые стороны, затем — рубашки.</li>" : ""}</ol>`,
+          ${cardsDeck ? `<li>Сначала печатаются лицевые стороны, затем — ${o.kind === "craft" ? "обороты" : "рубашки"}.</li>` : ""}</ol>`,
         ok: "Принтер готов — печатать",
       };
     },
@@ -602,6 +623,16 @@ function renderDrawer(full) {
             <div class="row-end"><span class="hint">Сообщение придёт в чат с ботом</span><button class="btn sm" id="send-msg">Отправить</button></div>
           </div>
         </section>
+        <section class="card" id="stage-box">
+          <h3>Этап заказа для клиента</h3>
+          <div class="stage-row">
+            <select class="input" name="stage">${Object.entries(o.stages || {}).map(([k, t]) => `<option value="${k}">${esc(t)}</option>`).join("")}</select>
+            <label class="btn sm" style="position:relative;overflow:hidden">📷 Фото<input type="file" name="stage_photo" accept="image/*" style="position:absolute;inset:0;opacity:0"></label>
+            <span class="hint" data-file-name>Фото не выбрано</span>
+          </div>
+          <textarea name="stage_text" rows="2" placeholder="Пара слов клиенту (необязательно): «Всё готово, забирайте после 18:00»"></textarea>
+          <div class="row-end"><span class="hint">Клиент получит сообщение с фото готового заказа</span><button class="btn sm primary" id="send-stage">Отправить этап</button></div>
+        </section>
         <section class="card">
           <h3>Состав заказа</h3>
           <dl class="kv" data-content></dl>
@@ -626,6 +657,12 @@ function renderDrawer(full) {
       openLightbox(state.detail[b.dataset.img], Number(b.dataset.i))));
     const send = drawer.querySelector("#send-msg");
     send.addEventListener("click", () => sendMessage(send));
+    const stageBtn = drawer.querySelector("#send-stage");
+    stageBtn.addEventListener("click", () => sendStage(stageBtn));
+    const stageFile = drawer.querySelector("[name=stage_photo]");
+    stageFile.addEventListener("change", () => {
+      drawer.querySelector("[data-file-name]").textContent = stageFile.files[0]?.name || "Фото не выбрано";
+    });
     bindNote(drawer.querySelector("#note"));
   }
   // живые части — обновляются при каждом опросе, не трогая поля ввода
@@ -634,7 +671,7 @@ function renderDrawer(full) {
     <div style="display:flex;flex-direction:column;gap:12px">
       ${statusBanner(o)}
       <div class="actions">${o.actions.length ? o.actions.map((a) =>
-        `<button class="btn ${ACTIONS[a]?.style || ""}" data-action="${a}">${esc(ACTIONS[a]?.label || o.action_titles[a])}</button>`).join("")
+        `<button class="btn ${ACTIONS[a]?.style || ""}" data-action="${a}">${esc(a === "print_backs" && o.kind === "craft" ? "🖨 Печать оборотов" : ACTIONS[a]?.label || o.action_titles[a])}</button>`).join("")
         : '<span class="hint">Действий нет — заказ завершён.</span>'}</div>
     </div>`;
   drawer.querySelectorAll("[data-action]").forEach((b) => b.addEventListener("click", () => doAction(state.detail, b.dataset.action, b)));
@@ -647,7 +684,7 @@ function renderDrawer(full) {
     ${o.cancelled_at ? `<dt>Отменён</dt><dd>${esc(fullTime(o.cancelled_at))}${o.cancel_reason ? " · " + esc(o.cancel_reason) : ""}</dd>` : ""}`;
   const actor = { client: "👤 клиент", admin: "🧑‍💼 оператор", system: "🤖 система" };
   drawer.querySelector("[data-events]").innerHTML = o.events.slice().reverse().map((ev) =>
-    `<li class="${ev.kind}">${esc(ev.text)}<time>${esc(fullTime(ev.at))} · ${actor[ev.actor] || esc(ev.actor)}</time></li>`).join("");
+    `<li class="${ev.kind === "stage" ? "success" : ev.kind}">${ev.kind === "stage" ? "📣 " : ""}${esc(ev.text)}<time>${esc(fullTime(ev.at))} · ${actor[ev.actor] || esc(ev.actor)}</time></li>`).join("");
 }
 
 async function sendMessage(btn) {
@@ -777,6 +814,19 @@ async function renderPrices() {
       <section class="card"><h3>Документы — за одну страницу A4</h3>
         <div class="price-row"><span>Цветная печать</span>${money("doc.color", prices.doc.color)}</div>
         <div class="price-row"><span>Чёрно-белая печать</span>${money("doc.bw", prices.doc.bw)}</div>
+      </section>
+      <section class="card"><h3>Изделия</h3>
+        ${[["memory_base", "Мемори — основа"], ["memory_pair", "Мемори — за каждую пару"], ["dates_sheet", "Карты для свиданий — за лист (9 карт)"],
+          ["wishes_sheet", "Карты желаний — за лист (9 карт)"], ["game_sheet", "Карты для игры — за лист (9 карт)"],
+          ["stickers_sheet", "Наклейки — за лист A4"], ["calendar", "Фотокалендарь"], ["postcard", "Открытка — за штуку"],
+          ["box", "Коробка для колоды"], ["enhance_photo", "Улучшение одного фото нейросетью"]].map(([k, t]) =>
+          `<div class="price-row"><span>${t}</span>${money(`craft.${k}`, prices.craft[k])}</div>`).join("")}
+      </section>
+      <section class="card"><h3>Надбавка за бумагу — за лист A4</h3>
+        <div class="price-row"><span>Плотная (документы)</span>${money("paper.thick", prices.paper.thick)}</div>
+        <div class="price-row"><span>Плотная матовая (фото)</span>${money("paper.matte", prices.paper.matte)}</div>
+        <div class="price-row"><span>Ламинация (карты и изделия)</span>${money("paper.lam", prices.paper.lam)}</div>
+        <p class="hint">Добавляется к цене заказа за каждый лист A4.</p>
       </section>
       <section class="card"><h3>Надбавка за качество фото</h3>
         ${[["draft", "Черновое"], ["normal", "Обычное"], ["high", "Высокое"]].map(([k, t]) =>
@@ -1031,3 +1081,120 @@ async function pairModal() {
     $app.innerHTML = `<div class="boot">Не удалось связаться с ботом: ${esc(e.message)}</div>`;
   }
 })();
+
+// ---------- склад ----------
+
+async function renderStock() {
+  const page = document.getElementById("page");
+  if (!page.querySelector("[data-stock]")) page.innerHTML = `<div class="empty" data-stock>Загружаем склад…</div>`;
+  let data;
+  try { data = await api("/api/stock"); }
+  catch (e) { page.innerHTML = `<div class="empty">Не удалось загрузить склад: ${esc(e.message)}</div>`; return; }
+  const stateText = { ok: ["ok", "в наличии"], low: ["warn", "мало"], out: ["error", "закончилось"] };
+  page.innerHTML = `
+    <h2 style="margin:0 0 4px">Склад</h2>
+    <p class="muted" style="margin:0 0 18px">Материалы списываются, когда клиент оформляет заказ, и возвращаются, если заказ отменён до печати.
+      Когда материал закончился, клиенты не смогут выбрать бумагу на нём — заказ не оформится.</p>
+    <div class="stock-grid">${data.materials.map((m) => {
+      const [tone, label] = stateText[m.state];
+      return `<section class="card stock-card" data-key="${m.key}">
+        <div class="row-between"><h3>${esc(m.title)}</h3><span class="pill ${tone}">${label}</span></div>
+        <div class="stock-num"><b>${m.stock}</b> ${esc(m.unit)}</div>
+        <div class="stock-bar"><i class="${tone}" style="width:${Math.min(100, Math.round(m.stock / Math.max(1, m.low * 4) * 100))}%"></i></div>
+        <div class="stock-actions">
+          <input class="input" type="number" min="1" step="1" placeholder="Сколько" data-amount>
+          <button class="btn sm primary" data-op="income">+ Приход</button>
+          <button class="btn sm" data-op="writeoff">− Списать</button>
+        </div>
+        <details><summary class="hint">Точный остаток и порог «мало»</summary>
+          <div class="stock-actions" style="margin-top:8px">
+            <label class="hint">Остаток <input class="input" type="number" min="0" value="${m.stock}" data-set></label>
+            <label class="hint">Порог <input class="input" type="number" min="0" value="${m.low}" data-low></label>
+            <button class="btn sm" data-op="save">Сохранить</button>
+          </div></details>
+      </section>`; }).join("")}</div>
+    <section class="card" style="margin-top:16px"><h3>Движение по складу</h3>
+      ${data.log.length ? `<table class="table"><thead><tr><th>Когда</th><th>Материал</th><th>Изменение</th><th>Причина</th></tr></thead><tbody>
+        ${data.log.map((r) => `<tr><td>${esc(fullTime(r.at))}</td><td>${esc(r.title)}</td>
+          <td class="${r.delta < 0 ? "neg" : "pos"}">${r.delta > 0 ? "+" : ""}${r.delta}</td>
+          <td>${esc(r.reason_title)}${r.order_id ? ` · <a href="#order=${r.order_id}">№${r.order_id}</a>` : ""}${r.note ? ` · ${esc(r.note)}` : ""}</td></tr>`).join("")}
+        </tbody></table>` : `<p class="hint">Движений пока нет.</p>`}
+    </section>`;
+  page.querySelectorAll(".stock-card").forEach((card) => card.querySelectorAll("[data-op]").forEach((b) => b.addEventListener("click", async () => {
+    const op = b.dataset.op, key = card.dataset.key;
+    let body;
+    if (op === "save") body = { set: card.querySelector("[data-set]").value, low: card.querySelector("[data-low]").value };
+    else {
+      const n = Number(card.querySelector("[data-amount]").value);
+      if (!n || n < 0) { toast("Укажите, сколько листов", "error"); card.querySelector("[data-amount]").focus(); return; }
+      body = { delta: op === "income" ? n : -n };
+    }
+    await withLoading(b, "…", async () => {
+      try { const r = await api(`/api/stock/${key}`, { method: "POST", body }); toast(r.message, "ok"); renderStock(); refresh(); }
+      catch (e) { toast(e.message, "error"); }
+    });
+  })));
+}
+
+// ---------- статистика ----------
+
+let statsDays = 30;
+async function renderStats() {
+  const page = document.getElementById("page");
+  page.innerHTML = `<div class="empty">Считаем…</div>`;
+  let s;
+  try { s = await api(`/api/stats?days=${statsDays}`); }
+  catch (e) { page.innerHTML = `<div class="empty">Не удалось посчитать: ${esc(e.message)}</div>`; return; }
+  const maxRev = Math.max(1, ...s.by_day.map((d) => d.revenue));
+  const bars = (items, valueKey, labelFn) => {
+    const max = Math.max(1, ...items.map((x) => x[valueKey]));
+    return items.length ? items.map((x) => `<div class="hbar"><span class="t">${esc(x.title)}</span>
+      <span class="track"><i style="width:${Math.round(x[valueKey] / max * 100)}%"></i></span><b>${esc(labelFn(x))}</b></div>`).join("")
+      : `<p class="hint">Пока нет данных.</p>`;
+  };
+  page.innerHTML = `
+    <div class="row-between" style="margin-bottom:14px"><h2 style="margin:0">Статистика</h2>
+      <div class="tabs">${[[7, "7 дней"], [30, "30 дней"], [90, "90 дней"], [365, "Год"]].map(([d, t]) =>
+        `<button data-days="${d}" class="${d === statsDays ? "active" : ""}">${t}</button>`).join("")}</div></div>
+    <section class="stats">
+      <div class="stat static"><div class="num">${esc(s.revenue)}</div><div class="lbl">Выручка</div></div>
+      <div class="stat static"><div class="num">${s.orders}</div><div class="lbl">Заказов · средний чек ${esc(s.avg)}</div></div>
+      <div class="stat static"><div class="num">${s.clients}</div><div class="lbl">Клиентов · вернулись ${s.repeat_clients}</div></div>
+      <div class="stat static"><div class="num">${s.cancelled}</div><div class="lbl">Отменено · выдано ${s.issued}</div></div>
+    </section>
+    <section class="card"><h3>Выручка по дням</h3>
+      <div class="chart" style="--n:${s.by_day.length}">${s.by_day.map((d) => `<div class="col" title="${esc(d.day)}: ${d.orders} зак., ${Math.round(d.revenue)} ₽">
+        <i style="height:${Math.round(d.revenue / maxRev * 100)}%"></i></div>`).join("")}</div>
+      <div class="row-between hint"><span>${esc(s.by_day[0]?.day || "")}</span><span>${esc(s.by_day.at(-1)?.day || "")}</span></div></section>
+    <div class="prices" style="margin-top:16px">
+      <section class="card"><h3>Что заказывают</h3>${bars(s.products, "kop", (x) => `${x.revenue} · ${x.orders}`)}</section>
+      <section class="card"><h3>Популярные рубашки</h3>${bars(s.backs, "count", (x) => String(x.count))}</section>
+      <section class="card"><h3>Ушло материалов</h3>${bars(s.materials, "used", (x) => `${x.used} ${x.unit}`)}</section>
+      <section class="card"><h3>Бумага в заказах, листов</h3>${bars(s.papers, "sheets", (x) => String(x.sheets))}</section>
+    </div>`;
+  page.querySelectorAll("[data-days]").forEach((b) => b.addEventListener("click", () => { statsDays = Number(b.dataset.days); renderStats(); }));
+}
+
+// ---------- этап заказа с фото ----------
+
+async function sendStage(btn) {
+  const box = document.getElementById("stage-box");
+  const form = new FormData();
+  form.append("stage", box.querySelector("[name=stage]").value);
+  form.append("text", box.querySelector("[name=stage_text]").value.trim());
+  const file = box.querySelector("[name=stage_photo]").files[0];
+  if (file) form.append("photo", file, file.name);
+  await withLoading(btn, "Отправляем…", async () => {
+    try {
+      const res = await fetch(`/api/orders/${state.openId}/stage`, { method: "POST", body: form });
+      const r = await res.json().catch(() => ({}));
+      if (!res.ok || r.ok === false) throw new Error(r.error || `Ошибка сервера (${res.status})`);
+      toast(r.message, "ok");
+      box.querySelector("[name=stage_text]").value = "";
+      box.querySelector("[name=stage_photo]").value = "";
+      box.querySelector("[data-file-name]").textContent = "Фото не выбрано";
+      state.detail = r.order;
+      renderDrawer(false);
+    } catch (e) { toast(e.message, "error"); }
+  });
+}

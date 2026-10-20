@@ -12,6 +12,8 @@ from pathlib import Path
 
 from PIL import Image, ImageChops, ImageDraw, ImageFilter, ImageFont, ImageOps
 
+import photoai
+
 DPI = 300
 
 
@@ -215,7 +217,7 @@ def render_card(card: Card, photo: Image.Image) -> Image.Image:
     # фото по центру с мягкими краями, без рамки
     box = PHOTO_BOX
     size = (box[2] - box[0], box[3] - box[1])
-    fitted = ImageOps.fit(photo, size, Image.LANCZOS, centering=(0.5, 0.42)).convert("RGBA")
+    fitted = photoai.fit(photo, size).convert("RGBA")  # кадр держит лица
     fitted.putalpha(_feather_mask(size, mm(2.4)))
     img.alpha_composite(fitted, box[:2])
 
@@ -766,7 +768,7 @@ def ink_for(card: Card) -> str | None:
 
 
 def fit_full(photo: Image.Image) -> Image.Image:
-    return ImageOps.fit(photo, (CARD_W, CARD_H), Image.LANCZOS, centering=(0.5, 0.45))
+    return photoai.fit(photo, (CARD_W, CARD_H), (0.5, 0.45))
 
 
 def corner_luminance(fitted: Image.Image) -> float:
@@ -871,7 +873,7 @@ def render_card_vintage(card: Card, photo: Image.Image | None) -> Image.Image:
         if path.exists():
             art = Image.open(path).convert("RGB").resize(size, Image.LANCZOS)
     if art is None and photo is not None:
-        art = ImageOps.fit(photo, size, Image.LANCZOS, centering=(0.5, 0.42))
+        art = photoai.fit(photo, size)
     if art is not None:
         img.paste(art, box[:2])
     d = ImageDraw.Draw(img)

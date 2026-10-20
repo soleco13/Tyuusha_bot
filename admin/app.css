@@ -354,3 +354,42 @@ textarea:focus, .input:focus { outline: none; border-color: var(--brand); box-sh
 @media (max-width: 640px) { .profile-grid { grid-template-columns: 1fr; } .pair-code { font-size: 34px; } }
 
 [hidden] { display: none !important; }
+
+/* склад */
+.nav-badge { display: inline-grid; place-items: center; min-width: 18px; height: 18px; padding: 0 5px; margin-left: 6px; border-radius: 9px;
+  background: var(--danger); color: #fff; font-size: 11px; font-weight: 700; }
+.nav-badge.hidden { display: none; }
+.stock-grid { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); }
+.stock-card h3 { margin: 0; font-size: 15px; }
+.row-between { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
+.stock-num { font-size: 14px; color: var(--muted); margin: 8px 0 6px; }
+.stock-num b { font-size: 28px; color: var(--text); }
+.stock-bar { height: 6px; border-radius: 3px; background: var(--border); overflow: hidden; margin-bottom: 12px; }
+.stock-bar i { display: block; height: 100%; background: var(--ok); }
+.stock-bar i.warn { background: var(--warn); }
+.stock-bar i.error { background: var(--danger); }
+.stock-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.stock-actions .input { width: 110px; }
+.pill { display: inline-block; padding: 3px 9px; border-radius: 999px; font-size: 12px; font-weight: 700; }
+.pill.ok { background: var(--ok-bg); color: var(--ok); }
+.pill.warn { background: var(--warn-bg); color: var(--warn); }
+.pill.error { background: var(--danger-bg); color: var(--danger); }
+.table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.table th { text-align: left; color: var(--muted); font-weight: 600; padding: 6px 8px; border-bottom: 1px solid var(--border); }
+.table td { padding: 7px 8px; border-bottom: 1px solid var(--border); }
+.table td.neg { color: var(--danger); font-weight: 700; }
+.table td.pos { color: var(--ok); font-weight: 700; }
+
+/* статистика */
+.chart { display: grid; grid-template-columns: repeat(var(--n), 1fr); align-items: end; gap: 2px; height: 160px; margin: 8px 0 6px; }
+.chart .col { height: 100%; display: flex; align-items: flex-end; }
+.chart .col i { display: block; width: 100%; min-height: 2px; border-radius: 3px 3px 0 0; background: var(--brand); opacity: .85; }
+.chart .col:hover i { opacity: 1; }
+.hbar { display: grid; grid-template-columns: minmax(90px, 1.2fr) 2fr auto; gap: 10px; align-items: center; padding: 5px 0; font-size: 13px; }
+.hbar .track { height: 8px; border-radius: 4px; background: var(--border); overflow: hidden; }
+.hbar .track i { display: block; height: 100%; background: var(--brand); border-radius: 4px; }
+.hbar b { white-space: nowrap; }
+
+/* этап заказа */
+.stage-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 8px; }
+.stage-row select { width: auto; }

@@ -12,15 +12,19 @@ import zipfile
 from pathlib import Path
 
 from aiohttp import web
-from PIL import Image
+from PIL import Image, ImageOps
 
 import agents
+import cards
 import config
 import db
+import materials
 import pricing
 import miniapi
 import printing
+import products
 import service
+import tg
 
 log = logging.getLogger("admin")
 
@@ -73,6 +77,9 @@ def _item(o: dict) -> dict:
         "created_at": o["created_at"], "updated_at": o["updated_at"],
         "print_state": o["print_state"], "last_error": o["last_error"],
         "actions": service.allowed_actions(o),
+        "profile": materials.profile_for(o["params"].get("paper"), o["kind"]),
+        "paper_title": (materials.PAPERS.get(o["params"].get("paper") or "") or ("",))[0],
+        "duplex": service.is_duplex(o),
     }
 
 
@@ -94,6 +101,7 @@ def _detail(o: dict) -> dict:
         "events": db.events_for(o["id"]),
         "action_titles": service.ACTION_TITLES,
         "print_part": (o.get("print_job") or {}).get("part", "front"),
+        "stages": {k: v[1] for k, v in service.STAGES.items()},
     })
     return d
 
@@ -155,6 +163,8 @@ async def summary(request: web.Request) -> web.Response:
         "counts": counts,
         "today": {"orders": today_count, "amount": pricing.format_rub(today_sum)},
         "printer": printer, "print_mode": config.PRINT_MODE, "profiles": profiles,
+        "stock_low": [{"title": m["title"], "state": m["state"], "stock": m["stock"], "unit": m["unit"]}
+                      for m in materials.stock().values() if m["state"] != "ok"],
         "server_time": db.now(),
     })
 
@@ -363,6 +373,123 @@ async def printer_cancel_job(request: web.Request) -> web.Response:
     return web.json_response({"ok": True, "message": "Задание удалено из очереди"})
 
 
+# ---------- склад ----------
+
+async def stock_get(request: web.Request) -> web.Response:
+    titles = {k: v[0] for k, v in materials.MATERIALS.items()}
+    reasons = {"order": "заказ", "reprint": "перепечатка", "release": "возврат с отменённого заказа",
+               "income": "приход", "writeoff": "списание", "set": "инвентаризация"}
+    log_rows = [{**r, "title": titles.get(r["key"], r["key"]), "reason_title": reasons.get(r["reason"], r["reason"])}
+                for r in materials.log(50)]
+    papers = {k: {"title": t, "state": materials.paper_state(k)} for k, (t, *_rest) in materials.PAPERS.items()}
+    return web.json_response({"ok": True, "materials": list(materials.stock().values()), "log": log_rows,
+                              "papers": papers})
+
+
+async def stock_update(request: web.Request) -> web.Response:
+    key = request.match_info["key"]
+    body = await request.json()
+    try:
+        alerts = materials.adjust(
+            key, delta=int(body.get("delta") or 0),
+            set_to=int(body["set"]) if body.get("set") not in (None, "") else None,
+            low=int(body["low"]) if body.get("low") not in (None, "") else None,
+            note=str(body.get("note", ""))[:200])
+    except materials.MaterialsError as e:
+        raise service.ServiceError(str(e)) from e
+    for text in alerts:
+        await tg.notify_admins(text)
+    return web.json_response({"ok": True, "message": "Склад обновлён", "materials": list(materials.stock().values())})
+
+
+# ---------- статистика ----------
+
+def _product_label(o: dict) -> str:
+    p = o["params"]
+    if o["kind"] == "cards":
+        return {"deck36": "Колода 36 карт", "deck54": "Колода 54 карты", "uno": "UNO"}.get(p.get("deck"), "Карты")
+    if o["kind"] == "craft":
+        return products.PRODUCTS.get(p.get("product"), {}).get("title", "Изделие")
+    if o["kind"] == "doc":
+        return "Документы"
+    return "Фото " + {"10x15": "10×15", "a5": "A5", "a4": "A4"}.get(p.get("format"), "")
+
+
+async def stats(request: web.Request) -> web.Response:
+    import datetime as dt
+    days = min(365, max(1, int(request.query.get("days", 30))))
+    start = dt.date.today() - dt.timedelta(days=days - 1)
+    since = start.isoformat()
+    rows = db.orders_since(since)
+    live = [o for o in rows if o["status"] != "cancelled"]
+    by_day = {(start + dt.timedelta(days=i)).isoformat(): {"orders": 0, "revenue": 0} for i in range(days)}
+    groups: dict[str, dict] = {}
+    backs: dict[str, int] = {}
+    papers: dict[str, int] = {}
+    users: dict[int, int] = {}
+    for o in live:
+        day = o["created_at"][:10]
+        if day in by_day:
+            by_day[day]["orders"] += 1
+            by_day[day]["revenue"] += o["amount"]
+        g = groups.setdefault(_product_label(o), {"orders": 0, "revenue": 0})
+        g["orders"] += 1
+        g["revenue"] += o["amount"]
+        back = o["params"].get("back")
+        if back and (o["kind"] == "cards" or o["kind"] == "craft"):
+            title = cards.back_title(back)
+            backs[title] = backs.get(title, 0) + 1
+        paper = materials.PAPERS.get(o["params"].get("paper") or "")
+        if paper:
+            papers[paper[0]] = papers.get(paper[0], 0) + o["params"].get("sheets", 0)
+        users[o["user_id"]] = users.get(o["user_id"], 0) + 1
+    revenue = sum(o["amount"] for o in live)
+    used = materials.used_since(since)
+    stock = materials.stock()
+    return web.json_response({
+        "ok": True, "days": days, "orders": len(live), "cancelled": len(rows) - len(live),
+        "issued": sum(1 for o in live if o["status"] == "issued"),
+        "revenue": pricing.format_rub(revenue), "avg": pricing.format_rub(revenue // len(live)) if live else "—",
+        "clients": len(users), "repeat_clients": sum(1 for n in users.values() if n > 1),
+        "by_day": [{"day": d, "orders": v["orders"], "revenue": v["revenue"] / 100} for d, v in by_day.items()],
+        "products": sorted(({"title": k, "orders": v["orders"], "revenue": pricing.format_rub(v["revenue"]),
+                             "kop": v["revenue"]} for k, v in groups.items()), key=lambda x: -x["kop"]),
+        "backs": sorted(({"title": k, "count": v} for k, v in backs.items()), key=lambda x: -x["count"])[:10],
+        "papers": sorted(({"title": k, "sheets": v} for k, v in papers.items()), key=lambda x: -x["sheets"]),
+        "materials": [{"title": stock[k]["title"], "unit": stock[k]["unit"], "used": n}
+                      for k, n in sorted(used.items(), key=lambda x: -x[1]) if k in stock],
+    })
+
+
+# ---------- этапы заказа с фото ----------
+
+async def order_stage(request: web.Request) -> web.Response:
+    oid = int(request.match_info["id"])
+    order = service.get(oid)
+    stage, text, photo = "", "", None
+    reader = await request.multipart()
+    while (part := await reader.next()) is not None:
+        if part.name == "stage":
+            stage = (await part.text()).strip()
+        elif part.name == "text":
+            text = (await part.text()).strip()[:800]
+        elif part.name == "photo" and part.filename:
+            raw = await part.read(decode=False)
+            if len(raw) > 15 * 1024 * 1024:
+                raise service.ServiceError("Фото больше 15 МБ")
+            try:
+                img = ImageOps.exif_transpose(Image.open(io.BytesIO(raw))).convert("RGB")
+            except Exception as e:
+                raise service.ServiceError("Не получилось прочитать фото — нужен JPG или PNG") from e
+            img.thumbnail((2560, 2560))
+            photo = Path(order["dir"]) / f"stage_{int(time.time())}.jpg"
+            photo.parent.mkdir(parents=True, exist_ok=True)
+            await asyncio.to_thread(img.save, photo, "JPEG", quality=90)
+    await service.send_stage(oid, stage, text, photo)
+    return web.json_response({"ok": True, "message": "Клиент получил сообщение" + (" с фото" if photo else ""),
+                              "order": _detail(service.get(oid))})
+
+
 # ---------- принтеры: компьютеры с агентом и профили печати ----------
 
 AGENT_EXE = config.BASE / "agent" / "dist" / "TyushaPrint.exe"
@@ -446,6 +573,9 @@ def make_app() -> web.Application:
         web.get(r"/api/orders/{id:\d+}/files/{kind}/{idx:\d+}", order_file),
         web.get(r"/api/orders/{id:\d+}/download", order_zip),
         web.get("/api/prices", prices_get), web.put("/api/prices", prices_put),
+        web.get("/api/stock", stock_get), web.post("/api/stock/{key}", stock_update),
+        web.get("/api/stats", stats),
+        web.post(r"/api/orders/{id:\d+}/stage", order_stage),
         web.post(r"/api/printer/jobs/{job:\d+}/cancel", printer_cancel_job),
         *miniapi.routes(),
         *agents.routes(),

@@ -23,8 +23,10 @@ import agents
 import cards
 import config
 import db
+import materials
 import photos
 import printing
+import products
 import tg
 from pricing import format_rub
 
@@ -39,6 +41,14 @@ STATUSES = {  # ключ: (для админа, эмодзи, для клиен�
     "cancelled": ("Отменён", "✖️", "отменён"),
 }
 QUALITY_TITLES = {"draft": "Черновое", "normal": "Обычное", "high": "Высокое"}
+
+# Этапы, о которых оператор может сообщить клиенту (с фото готового заказа или без)
+STAGES = {
+    "cutting": ("✂️", "Режем и собираем", "аккуратно режем листы и собираем ваш заказ"),
+    "packing": ("🎁", "Упаковываем", "упаковываем заказ"),
+    "ready": ("📦", "Готово к выдаче", "готов — можно забирать"),
+    "photo": ("📸", "Фото заказа", "вот как получился ваш заказ"),
+}
 
 ACTION_TITLES = {
     "printed_ok": "Напечатано", "print": "Печать", "print_backs": "Печать рубашек", "reprint": "Напечатать заново",
@@ -66,7 +76,26 @@ def get(order_id: int) -> dict:
 
 # ---------- описание заказа ----------
 
+def _paper_line(p: dict) -> str:
+    paper = materials.PAPERS.get(p.get("paper") or "")
+    return f"\nБумага: {paper[0].lower()}" if paper else ""
+
+
+def is_duplex(order: dict) -> bool:
+    """Двусторонний заказ: сначала печатаются лицевые листы, потом обороты."""
+    return order["kind"] == "cards" or (order["kind"] == "craft" and order["params"].get("duplex", False))
+
+
 def describe(kind: str, p: dict) -> str:
+    return _describe(kind, p) + _paper_line(p) + (f"\nУлучшено фото: {p['enhanced']}" if p.get("enhanced") else "")
+
+
+def _describe(kind: str, p: dict) -> str:
+    if kind == "craft":
+        lines = products.describe(p)
+        two = p.get("duplex")
+        lines.append(f"Листов A4: {p['sheets']}" + (f" лицевых + {p['sheets']} оборотов" if two else ""))
+        return "🎁 " + "\n".join(lines)
     if kind == "cards":
         deck = cards.DECKS[p["deck"]]
         style = "" if p["deck"] == "uno" else f"Оформление: {cards.style_title(p.get('style'))}\n"
@@ -92,6 +121,8 @@ def short_title(order: dict) -> str:
     p = order["params"]
     if order["kind"] == "cards":
         return f"Карты, {len(cards.deck_cards(cards.DECKS[p['deck']]))} шт."
+    if order["kind"] == "craft":
+        return f"{products.PRODUCTS[p['product']]['title']}, {p['count']} шт."
     if order["kind"] == "doc":
         return f"Документ, {p['doc_pages']} стр. × {p['copies']}"
     return f"Фото {photos.FORMATS[p['format']][0].split(' (')[0]}, {p['photos'] * p['copies']} отп."
@@ -115,8 +146,27 @@ def client_status_line(order: dict) -> str:
 
 # ---------- создание ----------
 
+def _needs(kind: str, params: dict, part: str = "all") -> dict[str, int]:
+    paper = params.get("paper") or materials.default_paper(kind)
+    sheets = int(params.get("sheets", 0))
+    sides = int(params.get("sides", sheets))
+    if part == "back":       # обороты печатаются на уже взятых листах — только чернила
+        return {"ink": sides - sheets}
+    return materials.needs(paper, sheets, sides)
+
+
+async def _stock_alerts(alerts: list[str]) -> None:
+    for text in alerts:
+        await tg.notify_admins(text)
+
+
 async def create_order(session: dict, user) -> dict:
     """Из сессии бота (фото, листы, параметры, сумма) делает заказ и сообщает оператору."""
+    need = _needs(session["kind"], session["params"])
+    missing = materials.shortages(need)
+    if missing:
+        raise ServiceError("Сейчас закончилось: " + ", ".join(missing).lower() +
+                           ". Мы уже пополняем запасы — попробуйте другой вариант бумаги или загляните позже")
     order = db.create_order(
         kind=session["kind"], status="new", amount=session["amount"], params=session["params"],
         user_id=user.id, user_name=user.full_name, username=user.username,
@@ -132,6 +182,12 @@ async def create_order(session: dict, user) -> dict:
                             previews=[rel(p) for p in session["previews"]],
                             sources=[rel(p) for p in session["photos"]])
     db.add_event(order["id"], f"Заказ оформлен: {short_title(order)}, {format_rub(order['amount'])}", "client")
+    try:
+        await _stock_alerts(materials.reserve(order["id"], need))
+    except materials.MaterialsError as e:  # материал кончился между проверкой и резервом
+        db.update_order(order["id"], status="cancelled", cancelled_at=db.now(), cancel_reason=str(e))
+        db.add_event(order["id"], f"Заказ не принят: {e}", "system", "warning")
+        raise ServiceError(str(e)) from e
     await tg.notify_admins(
         f"🆕 Новый заказ №{order['id']} — {format_rub(order['amount'])}\n"
         f"{html.escape(order['user_name'] or '')}: {short_title(order)}\n\nПанель: {config.ADMIN_URL}/#order={order['id']}",
@@ -150,10 +206,18 @@ async def start_print(order_id: int, part: str, actor: str = "admin") -> dict:
             raise ServiceError(f"Сейчас заказ «{STATUSES[order['status']][0]}» — эта печать недоступна")
         prev = order["status"]
         pages = [Path(p) for p in order["pages"]]
-        if order["kind"] == "cards":
+        duplex = is_duplex(order)
+        if duplex:
             half = len(pages) // 2
             pages = pages[half:] if part == "back" else pages[:half]
-        what = "рубашек" if part == "back" else ("лицевых сторон" if order["kind"] == "cards" else "документа" if order["kind"] == "doc" else "фото")
+        what = ("рубашек" if order["kind"] == "cards" else "оборотов") if part == "back" else (
+            "лицевых сторон" if duplex else "документа" if order["kind"] == "doc" else
+            "листов" if order["kind"] == "craft" else "фото")
+        if part == "front" and prev in ("printed", "issued", "fronts_printed"):  # перепечатка — снова бумага и чернила
+            try:
+                await _stock_alerts(materials.reserve(order_id, _needs(order["kind"], order["params"]), "reprint"))
+            except materials.MaterialsError as e:
+                raise ServiceError(str(e)) from e
         order = db.transition(order_id, (prev,), status="printing", print_state="Отправляем на принтер…",
                               print_job={"part": part, "prev": prev}, last_error=None)
         again = part == "front" and prev in ("printed", "issued", "fronts_printed")
@@ -162,8 +226,8 @@ async def start_print(order_id: int, part: str, actor: str = "admin") -> dict:
     p = order["params"]
     if config.PRINT_MODE == "agent":  # печатает программа на компьютере с принтером
         try:
-            job = agents.submit(order_id, order["kind"], f"Тюша №{order_id} {what}", pages,
-                                p.get("color", True), p.get("quality", "high"))
+            job = agents.submit(order_id, materials.profile_for(p.get("paper"), order["kind"]),
+                                f"Тюша №{order_id} {what}", pages, p.get("color", True), p.get("quality", "high"))
         except agents.PrintError as e:
             db.update_order(order_id, status=prev, print_state=None, print_job=None)
             db.add_event(order_id, f"Печать не запущена: {e}", "system", "warning")
@@ -201,10 +265,10 @@ async def start_print(order_id: int, part: str, actor: str = "admin") -> dict:
 async def _finish_print(order_id: int) -> dict:
     order = get(order_id)
     job = order["print_job"] or {}
-    if order["kind"] == "cards" and job.get("part") == "front":
+    if is_duplex(order) and job.get("part") == "front":
         order = db.update_order(order_id, status="fronts_printed", print_state=None, print_job=None)
-        db.add_event(order_id, "Лицевые стороны напечатаны. Переверните стопку и запустите печать рубашек",
-                     "system", "success")
+        db.add_event(order_id, "Лицевые стороны напечатаны. Переверните стопку и запустите печать "
+                     + ("рубашек" if order["kind"] == "cards" else "оборотов"), "system", "success")
         await tg.notify_admins(
             f"🔄 Заказ №{order_id}: лицевые стороны напечатаны.\nДайте чернилам высохнуть, переверните стопку "
             "(первый лист сверху) и запустите печать рубашек.",
@@ -347,7 +411,11 @@ async def cancel(order_id: int, actor: str = "admin", reason: str = "", notify: 
             raise ServiceError("Заказ сейчас печатается — сначала снимите задание с принтера")
         if order["status"] == "issued":
             raise ServiceError("Заказ уже выдан")
+        was = order["status"]
         order = db.update_order(order_id, status="cancelled", cancelled_at=db.now(), cancel_reason=reason or None)
+        if was == "new":
+            materials.release(order_id)
+            db.add_event(order_id, "Материалы вернулись на склад", "system")
         who = "клиентом" if actor == "client" else "оператором"
         db.add_event(order_id, f"Заказ отменён {who}" + (f": {reason}" if reason else ""), actor, "warning")
     if actor == "client":
@@ -364,6 +432,22 @@ async def message_client(order_id: int, text: str, actor: str = "admin") -> None
     if not sent:
         raise ServiceError("Не удалось отправить: возможно, клиент заблокировал бота")
     db.add_event(order_id, f"Сообщение клиенту: {text}", actor)
+
+
+async def send_stage(order_id: int, stage: str, text: str = "", photo: Path | None = None,
+                     actor: str = "admin") -> None:
+    """Сообщение клиенту об этапе заказа — с фото готового заказа, если оператор его приложил."""
+    if stage not in STAGES:
+        raise ServiceError("Неизвестный этап")
+    order = get(order_id)
+    if order["status"] == "cancelled":
+        raise ServiceError("Заказ отменён — сообщать нечего")
+    emoji, title, client = STAGES[stage]
+    caption = f"{emoji} <b>Заказ №{order_id}: {client}</b>" + (f"\n\n{html.escape(text)}" if text else "")
+    ok = await (tg.safe_photo(order["user_id"], photo, caption) if photo else tg.safe_send(order["user_id"], caption))
+    if not ok:
+        raise ServiceError("Не удалось отправить: возможно, клиент заблокировал бота")
+    db.add_event(order_id, f"{title}" + (f": {text}" if text else "") + (" (с фото)" if photo else ""), actor, "stage")
 
 
 def set_note(order_id: int, note: str) -> dict:

@@ -58,6 +58,16 @@ async def safe_send(chat_id: int, text: str, reply_markup: InlineKeyboardMarkup 
         return None
 
 
+async def safe_photo(chat_id: int, path, caption: str = "",
+                     reply_markup: InlineKeyboardMarkup | None = None) -> Message | None:
+    """Фото с подписью; если не ушло — хотя бы текст."""
+    try:
+        return await bot.send_photo(chat_id, FSInputFile(path), caption=caption[:1024], reply_markup=reply_markup)
+    except Exception as e:
+        log.warning("Фото %s не отправилось: %s", chat_id, e)
+        return await safe_send(chat_id, caption, reply_markup) if caption else None
+
+
 async def safe_edit(chat_id: int, message_id: int | None, text: str,
                     reply_markup: InlineKeyboardMarkup | None = None) -> bool:
     if not message_id:

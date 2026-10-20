@@ -4,6 +4,7 @@ from __future__ import annotations
 import copy
 
 import db
+import materials
 
 DEFAULT_PRICES = {
     "cards": {"deck36": 990, "deck54": 1290, "uno": 1790},
@@ -15,6 +16,12 @@ DEFAULT_PRICES = {
     "doc": {"color": 15, "bw": 8},
     # надбавка за качество, % к цене
     "quality_markup": {"draft": -20, "normal": 0, "high": 20},
+    # надбавка за бумагу, ₽ за лист A4
+    "paper": {"thick": 6, "matte": 8, "lam": 25},
+    # изделия из конструктора (products.py) и улучшение фото, ₽
+    "craft": {"memory_base": 290, "memory_pair": 25, "dates_sheet": 120, "wishes_sheet": 120,
+              "stickers_sheet": 190, "calendar": 890, "postcard": 70, "box": 190, "game_sheet": 120,
+              "enhance_photo": 10},
 }
 
 
@@ -33,8 +40,9 @@ def get_prices() -> dict:
 
 def set_prices(prices: dict) -> dict:
     clean = copy.deepcopy(DEFAULT_PRICES)
-    for deck in clean["cards"]:
-        clean["cards"][deck] = _money(prices["cards"].get(deck, clean["cards"][deck]))
+    for section in ("cards", "paper", "craft"):
+        for key in clean[section]:
+            clean[section][key] = _money(prices.get(section, {}).get(key, clean[section][key]))
     for fmt in clean["photo"]:
         for mode in ("color", "bw"):
             clean["photo"][fmt][mode] = _money(prices["photo"][fmt][mode])
@@ -57,16 +65,33 @@ def _money(v) -> int:
     return v
 
 
+def paper_extra(params: dict, p: dict) -> int:
+    """Надбавка за бумагу в рублях: ₽ за лист × число листов."""
+    paper = materials.PAPERS.get(params.get("paper") or "")
+    key = paper[3] if paper else None
+    return p["paper"].get(key, 0) * int(params.get("sheets", 0)) if key else 0
+
+
 def quote(kind: str, params: dict) -> tuple[int, str]:
     """Возвращает (сумма в копейках, расшифровка для клиента)."""
     p = get_prices()
+    extra = paper_extra(params, p) + p["craft"]["enhance_photo"] * int(params.get("enhanced", 0))
+    tail = ""
+    if paper_extra(params, p):
+        tail += f" + бумага {paper_extra(params, p)} ₽"
+    if params.get("enhanced"):
+        tail += f" + улучшение {params['enhanced']} фото"
     if kind == "cards":
         rub = p["cards"][params["deck"]]
-        return rub * 100, f"Колода — {rub} ₽"
+        return (rub + extra) * 100, f"Колода — {rub} ₽{tail}"
+    if kind == "craft":
+        import products
+        rub, detail = products.price(params, p["craft"])
+        return (rub + extra) * 100, detail + tail
     if kind == "doc":
         unit_k = p["doc"]["color" if params["color"] else "bw"] * 100
         count = params["doc_pages"] * params["copies"]
-        return unit_k * count, f"{count} стр. × {format_rub(unit_k)}"
+        return unit_k * count + extra * 100, f"{count} стр. × {format_rub(unit_k)}{tail}"
     unit = p["photo"][params["format"]]["color" if params["color"] else "bw"]
     markup = p["quality_markup"][params["quality"]]
     unit_k = round(unit * 100 * (100 + markup) / 100)
@@ -74,7 +99,7 @@ def quote(kind: str, params: dict) -> tuple[int, str]:
     detail = f"{count} отп. × {format_rub(unit_k)}"
     if markup:
         detail += f" (качество {'+' if markup > 0 else '−'}{abs(markup)} %)"
-    return unit_k * count, detail
+    return unit_k * count + extra * 100, detail + tail
 
 
 def format_rub(kop: int) -> str:
