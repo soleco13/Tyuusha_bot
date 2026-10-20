@@ -668,3 +668,65 @@ input[type="range"] { width: 100%; accent-color: var(--blue); }
 .style-opt .style-cards .pc:last-child { left: 38%; transform: rotate(6deg); }
 .style-opt .t { font-weight: 650; font-size: 14px; }
 .style-opt .s { font-size: 12px; color: var(--muted); line-height: 1.3; }
+
+/* UNO: как в печати — цветное поле с узором, наклонный белый овал, фото внутри, белые цифры с тёмным контуром */
+.uc { --b: #4CBED4; --d: #12687E; position: relative; display: block; overflow: hidden; container-type: inline-size;
+  border-radius: 7% / 5%; background-color: var(--b); box-shadow: 0 6px 16px -8px rgba(23, 32, 51, .45), 0 0 0 1px rgba(23, 32, 51, .06); }
+.uc.u-0, .uc.u-wild { background-image: conic-gradient(rgba(255,255,255,.13) 25%, transparent 0 50%, rgba(255,255,255,.13) 0 75%, transparent 0);
+  background-size: 7cqw 7cqw; }
+.uc.u-wild { background-image: conic-gradient(rgba(255,255,255,.05) 25%, transparent 0 50%, rgba(255,255,255,.05) 0 75%, transparent 0); }
+.uc.u-1 { background-image: radial-gradient(rgba(255,255,255,.18) 18%, transparent 22%); background-size: 7cqw 7cqw; }
+.uc.u-2 { background-image: radial-gradient(rgba(255,255,255,.22) 16%, transparent 20%); background-size: 9cqw 9cqw; }
+.uc.u-3 { background-image: repeating-linear-gradient(90deg, rgba(255,255,255,.14) 0 1.75cqw, transparent 0 3.5cqw); }
+.uc .fr { position: absolute; inset: 3.8cqw; border: .7cqw solid var(--d); border-radius: 4.1cqw; }
+.uc .ov { position: absolute; left: 16.7%; right: 16.7%; top: 4.5%; bottom: 4.5%; border-radius: 50%; background: #fff;
+  box-shadow: 0 0 0 .9cqw var(--d); transform: rotate(28deg); overflow: hidden; }
+.uc.u-wild .ov { background: #FAF8FC; }
+.uc .ovi { position: absolute; inset: 2.2cqw; border-radius: 50%; overflow: hidden; box-shadow: 0 0 0 .5cqw rgba(255,255,255,.9); }
+.uc .ovp { position: absolute; inset: -22%; transform: rotate(-28deg); background-size: cover !important; background-position: 50% 42% !important; }
+.uc .ov .big { position: absolute; inset: 0; display: grid; place-items: center; transform: rotate(-28deg);
+  font: 900 48cqw/1 "Unbounded", "Onest", sans-serif; color: var(--b); -webkit-text-stroke: 3cqw var(--d); paint-order: stroke fill; }
+.uc .ov .sym { position: absolute; inset: 0; display: grid; place-items: center; transform: rotate(-28deg); }
+.uc .ov .sym svg { width: 57cqw; height: 57cqw; }
+.uc .ov .sym.s-wild svg { width: 52cqw; height: 52cqw; }
+.uc .ov .sym.s-wild4 svg { width: 66cqw; height: 66cqw; }
+.uc .ci { position: absolute; left: 3.8cqw; top: 4.1cqw; width: 20.6cqw; height: 20.6cqw; display: grid; place-items: center; }
+.uc .ci.r { left: auto; top: auto; right: 3.8cqw; bottom: 4.1cqw; transform: rotate(180deg); }
+.uc .ci span { font: 900 13.6cqw/1 "Unbounded", "Onest", sans-serif; color: #fff; -webkit-text-stroke: 1.75cqw var(--d); paint-order: stroke fill; }
+.uc .ci.plus span { font-size: 10.2cqw; }
+.uc .ci svg { width: 16.7cqw; height: 16.7cqw; }
+.fan .uc { position: absolute; inset: 0; transition: transform .5s var(--spring); }
+.fan .uc:nth-child(2) { transform: rotate(-2deg) translate(0, -2%); }
+.fan .uc:nth-child(3) { transform: rotate(12deg) translate(26%, 5%); }
+
+/* рубашка UNO со своей надписью и фото: те же пропорции, что на печати */
+.pc.ub { background-size: cover; }
+.pc.ub .ubp { position: absolute; left: 16.2%; right: 16.2%; top: 5.35%; bottom: 5.35%; border-radius: 50%; overflow: hidden; transform: rotate(28deg); }
+.pc.ub .ubp .ovp { position: absolute; inset: -22%; transform: rotate(-28deg); background-size: cover !important; background-position: 50% 42% !important; }
+.pc.ub .ubt { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1.4cqw;
+  transform: rotate(-24deg); pointer-events: none; text-align: center; }
+.pc.ub .ubt b { font-family: "Unbounded", "Onest", sans-serif; font-weight: 900; line-height: 1; white-space: nowrap; paint-order: stroke fill; letter-spacing: -.01em; }
+.pc.ub .ubt small { font-family: "Unbounded", "Onest", sans-serif; font-weight: 700; line-height: 1; white-space: nowrap; color: #fff; paint-order: stroke fill; }
+
+/* конструктор UNO: палитры, свои цвета, превью, редактор рубашки */
+.palettes { display: flex; gap: 8px; overflow-x: auto; padding: 2px 2px 6px; scrollbar-width: none; }
+.pal-opt { flex: none; display: flex; align-items: center; gap: 8px; padding: 9px 13px 9px 10px; border-radius: 999px; background: var(--surface);
+  box-shadow: var(--card-shadow); font-weight: 600; font-size: 14px; }
+.pal-opt.on { box-shadow: 0 0 0 2.5px var(--blue), var(--card-shadow); }
+.pal-opt .dots { display: flex; }
+.pal-opt .dots i { width: 14px; height: 14px; border-radius: 50%; border: 2px solid var(--surface); margin-left: -5px; }
+.pal-opt .dots i:first-child { margin-left: 0; }
+.swatches { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 6px; }
+.swatches .small { flex: 1 1 160px; }
+.swatch { position: relative; width: 40px; height: 40px; border-radius: 50%; background: var(--c); box-shadow: inset 0 0 0 3px var(--d);
+  display: grid; place-items: center; cursor: pointer; }
+.swatch input { position: absolute; inset: 0; opacity: 0; width: 100%; height: 100%; cursor: pointer; }
+.swatch span { font: 900 13px/1 "Unbounded", sans-serif; color: #fff; -webkit-text-stroke: 3px var(--d); paint-order: stroke fill; }
+.uno-preview { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-top: 12px; }
+.uno-preview .uc { aspect-ratio: 63 / 88; }
+.backs .back-opt .pc.ub { position: relative; }
+.ub-edit { display: grid; grid-template-columns: 38% 1fr; gap: 14px; align-items: start; }
+.ub-prev .pc { width: 100%; }
+.ub-fields { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.ub-fields .field { display: flex; flex-direction: column; gap: 6px; }
+.ub-fields .lbl { display: flex; justify-content: space-between; font-size: 13px; font-weight: 600; }

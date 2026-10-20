@@ -6,7 +6,7 @@ import copy
 import db
 
 DEFAULT_PRICES = {
-    "cards": {"deck36": 990, "deck54": 1290},
+    "cards": {"deck36": 990, "deck54": 1290, "uno": 1790},
     # цена за один отпечаток: формат -> {цвет/ЧБ}
     "photo": {"10x15": {"color": 30, "bw": 20},
               "a5": {"color": 60, "bw": 35},
@@ -34,7 +34,7 @@ def get_prices() -> dict:
 def set_prices(prices: dict) -> dict:
     clean = copy.deepcopy(DEFAULT_PRICES)
     for deck in clean["cards"]:
-        clean["cards"][deck] = _money(prices["cards"][deck])
+        clean["cards"][deck] = _money(prices["cards"].get(deck, clean["cards"][deck]))
     for fmt in clean["photo"]:
         for mode in ("color", "bw"):
             clean["photo"][fmt][mode] = _money(prices["photo"][fmt][mode])

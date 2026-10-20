@@ -46,6 +46,8 @@ DECKS = {
                            ("6", "7", "8", "9", "10", "В", "Д", "К", "Т"), 0),
     "deck54": DeckTemplate("deck54", "Колода 54 карты (2 – Туз + 2 джокера)",
                            ("2", "3", "4", "5", "6", "7", "8", "9", "10", "В", "Д", "К", "Т"), 2),
+    # состав, рубашки и рисунок UNO — в uno.py
+    "uno": DeckTemplate("uno", "Колода UNO (108 карт, фото на картах с цифрами)", (), 0),
 }
 
 
@@ -56,6 +58,9 @@ class Card:
 
 
 def deck_cards(template: DeckTemplate) -> list[Card]:
+    if template.key == "uno":
+        import uno
+        return uno.deck()
     cards = [Card(rank, suit) for suit in SUIT_ORDER for rank in template.ranks]
     cards += [Card("JOKER", None) for _ in range(template.jokers)]
     return cards
@@ -338,21 +343,381 @@ def back_flowers() -> Image.Image:
     return _finish(img)
 
 
+# --- общие фигуры для рубашек ---
+
+def _star_pts(cx: float, cy: float, R: float, r: float, n: int = 5, rot: float = 0) -> list[tuple[float, float]]:
+    pts = []
+    for i in range(n * 2):
+        a = math.radians(-90 + rot + i * 180 / n)
+        rad = R if i % 2 == 0 else r
+        pts.append((cx + rad * math.cos(a), cy + rad * math.sin(a)))
+    return pts
+
+
+def _sparkle_pts(cx: float, cy: float, rx: float, ry: float, steps: int = 72,
+                 power: float = 3) -> list[tuple[float, float]]:
+    """Четырёхлучевая «искра» с вогнутыми сторонами (астроида); чем больше power, тем тоньше лучи."""
+    pts = []
+    for i in range(steps):
+        t = 2 * math.pi * i / steps
+        c, sn = math.cos(t), math.sin(t)
+        pts.append((cx + rx * math.copysign(abs(c) ** power, c), cy + ry * math.copysign(abs(sn) ** power, sn)))
+    return pts
+
+
+def _bow(d: ImageDraw.ImageDraw, x: float, y: float, size: float, color, line: float = 0, rot: float = 0) -> None:
+    """Бантик: две петли (лемниската Жероно), узелок и два хвостика. line=0 — залитый, иначе контур."""
+    ca, sa = math.cos(math.radians(rot)), math.sin(math.radians(rot))
+
+    def tr(px, py):
+        return x + px * ca - py * sa, y + px * sa + py * ca
+
+    loop = [tr(size * math.cos(t) * .5, size * math.sin(t) * math.cos(t) * .55 - size * .02)
+            for t in (2 * math.pi * i / 80 for i in range(80))]
+    tails = [[tr(-size * .04, size * .02), tr(-size * .2, size * .32), tr(-size * .3, size * .62)],
+             [tr(size * .04, size * .02), tr(size * .16, size * .34), tr(size * .3, size * .6)]]
+    if line:
+        d.line(loop + [loop[0]], fill=color, width=round(line), joint="curve")
+        for t in tails:
+            d.line(t, fill=color, width=round(line), joint="curve")
+        k = size * .07
+        d.ellipse((x - k, y - k, x + k, y + k), fill=color)
+    else:
+        d.polygon(loop, fill=color)
+        for t in tails:
+            d.line(t, fill=color, width=round(size * .11), joint="curve")
+        k = size * .1
+        d.ellipse((x - k, y - k, x + k, y + k), fill=color)
+
+
+def _paste_shape(img: Image.Image, fn, cx: float, cy: float, size: int, color) -> None:
+    sh = _shape(size, fn, (0, 0, 0))
+    img.paste(Image.new("RGB", (size, size), color), (round(cx - size / 2), round(cy - size / 2)), sh.getchannel("A"))
+
+
+def _radial(size: tuple[int, int], inner, outer, power: float = 1.0) -> Image.Image:
+    """Радиальный градиент от центра к краям (по форме карты)."""
+    g = Image.radial_gradient("L").resize(size, Image.BICUBIC)  # 0 в центре, 255 по краю
+    if power != 1:
+        g = g.point(lambda v: round(255 * min(1, v / 255) ** power))
+    return Image.composite(Image.new("RGB", size, outer), Image.new("RGB", size, inner), g)
+
+
+def _pairs(rnd: random.Random, n: int, W: float, H: float):
+    """Случайные точки парами, симметричными относительно центра — рубашка одинакова при повороте."""
+    for _ in range(n):
+        x, y = rnd.uniform(0, W), rnd.uniform(0, H / 2)
+        yield (x, y), (W - x, H - y)
+
+
+# --- рубашки по референсам ---
+
+def back_bows() -> Image.Image:
+    img, d, s = _canvas((74, 12, 14))
+    for x, y, r, c in _grid(mm(11) * s, img.width, img.height):
+        _bow(d, x, y, mm(4.2) * s, (236, 214, 200, 235), line=mm(.28) * s, rot=-8 if (r + c) % 2 else 6)
+    return _finish(img)
+
+
+def back_bows_mint() -> Image.Image:
+    img, d, s = _canvas((214, 236, 214))
+    glow = Image.new("L", img.size, 0)
+    gd = ImageDraw.Draw(glow)
+    for (x, y) in ((img.width * .78, img.height * .2), (img.width * .22, img.height * .8),
+                   (img.width * .2, img.height * .36), (img.width * .8, img.height * .64)):
+        R = mm(8) * s
+        gd.ellipse((x - R, y - R, x + R, y + R), fill=230)
+    img.paste(Image.new("RGB", img.size, (250, 255, 248)), (0, 0), glow.filter(ImageFilter.GaussianBlur(mm(5) * s)))
+    d = ImageDraw.Draw(img, "RGBA")
+    for x, y, r, c in _grid(mm(10.5) * s, img.width, img.height):
+        _bow(d, x, y, mm(3.8) * s, (110, 170, 120, 240), line=mm(.3) * s, rot=-10 if (r + c) % 2 else 8)
+    return _finish(img)
+
+
+def back_bows_lilac() -> Image.Image:
+    img, d, s = _canvas((226, 216, 242))
+    for x, y, r, c in _grid(mm(10) * s, img.width, img.height):
+        size = mm(5.4) * s
+        rot = -14 if (r + c) % 2 else 10
+        _bow(d, x + mm(.25) * s, y + mm(.35) * s, size, (70, 30, 130, 150), rot=rot)  # тень-контур
+        _bow(d, x, y, size, (128, 78, 200, 255), rot=rot)
+        _bow(d, x, y, size * .62, (160, 118, 225, 255), rot=rot)
+    for x, y, _, _ in _grid(mm(10) * s, img.width, img.height):
+        k = mm(.45) * s
+        x2, y2 = x + mm(5) * s, y + mm(2.5) * s
+        d.ellipse((x2 - k, y2 - k, x2 + k, y2 + k), fill=(110, 60, 180, 220))
+    return _finish(img)
+
+
+def back_heartwave() -> Image.Image:
+    W, H = CARD_W, CARD_H
+    img = Image.new("RGB", (W, H), (234, 243, 252))
+    cols = [(64, 120, 196), (154, 196, 236), (234, 243, 252)]
+    size = round(W * 1.9)
+    k = 0
+    while size > mm(4):
+        _paste_shape(img, _heart, W / 2, H / 2 + size * .02, size, cols[k % 3])
+        size -= mm(3.6)
+        k += 1
+    return img
+
+
+def back_celestial(bg=(10, 10, 12), ink=(208, 156, 122)) -> Image.Image:
+    img, d, s = _canvas(bg)
+    W, H = img.width, img.height
+    lw = max(2, round(mm(.22) * s))
+    m1, m2 = mm(3.2) * s, mm(4.2) * s
+    d.rounded_rectangle((m1, m1, W - m1, H - m1), mm(3) * s, outline=ink, width=lw)
+    d.rounded_rectangle((m2, m2, W - m2, H - m2), mm(2.2) * s, outline=ink, width=max(1, lw // 2))
+    cx, cy = W / 2, H / 2
+    R = mm(17) * s
+    d.line(_star_pts(cx, cy, R, R * .5, 6) + [_star_pts(cx, cy, R, R * .5, 6)[0]], fill=ink, width=lw)
+    d.line(_star_pts(cx, cy, R * .82, R * .42, 6, 30) + [_star_pts(cx, cy, R * .82, R * .42, 6, 30)[0]],
+           fill=ink, width=max(1, lw // 2))
+    r0 = R * .2
+    d.ellipse((cx - r0, cy - r0, cx + r0, cy + r0), outline=ink, width=lw)
+    for i in range(8):  # бусины вокруг
+        a = math.radians(i * 45)
+        bx, by, br = cx + math.cos(a) * r0 * 1.45, cy + math.sin(a) * r0 * 1.45, r0 * .16
+        d.ellipse((bx - br, by - br, bx + br, by + br), fill=ink)
+    moon = Image.new("L", img.size, 0)
+    ImageDraw.Draw(moon).ellipse((cx - r0 * .6, cy - r0 * .6, cx + r0 * .6, cy + r0 * .6), fill=255)
+    cut = Image.new("L", img.size, 0)
+    ImageDraw.Draw(cut).ellipse((cx - r0 * .3, cy - r0 * .75, cx + r0 * .85, cy + r0 * .5), fill=255)
+    img.paste(Image.new("RGB", img.size, ink), (0, 0), ImageChops.subtract(moon, cut))
+    d = ImageDraw.Draw(img, "RGBA")
+    for sign in (-1, 1):  # вертикальная ось с искрами и точками
+        y0 = cy + sign * R * 1.12
+        y1 = cy + sign * (H / 2 - mm(9) * s)
+        steps = 14
+        for i in range(steps + 1):
+            y = y0 + (y1 - y0) * i / steps
+            k = mm(.22) * s
+            d.ellipse((cx - k, y - k, cx + k, y + k), fill=ink)
+        for f, size in ((.4, mm(2.8)), (.78, mm(1.9))):
+            y = y0 + (y1 - y0) * f
+            d.polygon(_sparkle_pts(cx, y, size * s, size * s * 1.3, power=4), fill=ink)
+            k = size * s * .5
+            d.ellipse((cx - k, y - k, cx + k, y + k), outline=ink, width=max(1, lw // 2))
+        y = y1 + sign * mm(1.6) * s
+        d.polygon(_star_pts(cx, y, mm(1.7) * s, mm(.75) * s, 5, 0 if sign < 0 else 180), outline=ink, width=lw)
+    rnd = random.Random(5)
+    for a, b in _pairs(rnd, 26, W, H):
+        for px, py in (a, b):
+            if abs(px - cx) < R * 1.1 and abs(py - cy) < R * 1.1 or px < m2 * 1.4 or px > W - m2 * 1.4 \
+                    or py < m2 * 1.4 or py > H - m2 * 1.4:
+                continue
+            if rnd.random() < .3:
+                sz = mm(1.1) * s
+                d.polygon(_sparkle_pts(px, py, sz, sz), fill=ink)
+            else:
+                k = mm(.28) * s
+                d.ellipse((px - k, py - k, px + k, py + k), fill=ink)
+    return _finish(img)
+
+
+def back_celestial_rose() -> Image.Image:
+    return back_celestial((246, 206, 212), (182, 112, 96))
+
+
+def back_cherries() -> Image.Image:
+    img, d, s = _canvas((244, 246, 236))
+    for x, y, r, c in _grid(mm(10) * s, img.width, img.height):
+        k = s * mm(1)
+        flip = -1 if (r + c) % 2 else 1
+        top = (x + flip * .8 * k, y - 3.4 * k)
+        berries = [(x - 1.4 * k, y + 1.1 * k), (x + 1.5 * k, y + .6 * k)]
+        for bx, by in berries:
+            d.line([(bx, by - k), ((bx + top[0]) / 2 + flip * .3 * k, (by + top[1]) / 2 - .4 * k), top],
+                   fill=(110, 80, 40, 255), width=round(.28 * k), joint="curve")
+        leaf = [(top[0] + flip * (math.cos(t) * 1.6 + 1.5) * k, top[1] + math.sin(t) * .6 * k - .3 * k)
+                for t in (2 * math.pi * i / 30 for i in range(30))]
+        d.polygon(leaf, fill=(104, 160, 70, 255))
+        for bx, by in berries:
+            R = 1.25 * k
+            d.ellipse((bx - R, by - R, bx + R, by + R), fill=(204, 30, 40, 255))
+            h = .35 * k
+            d.ellipse((bx - R * .45 - h, by - R * .45 - h, bx - R * .45 + h, by - R * .45 + h), fill=(255, 210, 210, 210))
+    return _finish(img)
+
+
+def back_stars_beige() -> Image.Image:
+    img, d, s = _canvas((214, 204, 184))
+    W, H = img.width, img.height
+    rnd = random.Random(8)
+    spec = [(.18, .1, mm(13), (78, 66, 56)), (.84, .3, mm(8), (150, 120, 76)), (.2, .55, mm(5), (150, 120, 76)),
+            (.6, .1, mm(4), (150, 120, 76)), (.45, .38, mm(6.5), (78, 66, 56)), (.92, .05, mm(3), (78, 66, 56))]
+    for fx, fy, R, col in spec:
+        rot = rnd.uniform(-20, 20)
+        for (x, y, r) in ((fx * W, fy * H, rot), (W - fx * W, H - fy * H, rot + 180)):
+            d.polygon(_star_pts(x, y, R * s, R * s * .45, 5, r), fill=col)
+    return _finish(img)
+
+
+def back_glow(inner=(150, 14, 26), outer=(255, 255, 255), dots=((196, 40, 52), (255, 255, 255)), seed=3) -> Image.Image:
+    s = 2
+    W, H = CARD_W * s, CARD_H * s
+    img = _radial((W, H), inner, outer, power=.85)
+    d = ImageDraw.Draw(img, "RGBA")
+    rnd = random.Random(seed)
+    for a, b in _pairs(rnd, 6, W, H):
+        for px, py in (a, b):
+            size = rnd.choice([mm(1.6), mm(2.4), mm(3.6)]) * s
+            col = dots[rnd.random() < .4]
+            d.polygon(_sparkle_pts(px, py, size * .7, size), fill=col + (215,))
+    return _finish(img)
+
+
+def back_glow_red() -> Image.Image:
+    return back_glow()
+
+
+def back_glow_blue() -> Image.Image:
+    s = 2
+    W, H = CARD_W * s, CARD_H * s
+    img = _radial((W, H), (64, 104, 196), (242, 246, 252), power=.8)
+    d = ImageDraw.Draw(img, "RGBA")
+    rnd = random.Random(21)
+    for a, b in _pairs(rnd, 9, W, H):
+        size = rnd.choice([mm(1.4), mm(2.2), mm(3.4)]) * s
+        col = (255, 255, 255, 230) if rnd.random() < .6 else (34, 60, 140, 230)
+        rot = rnd.uniform(-25, 25)
+        for (px, py), r in ((a, rot), (b, rot + 180)):
+            d.polygon(_star_pts(px, py, size, size * .42, 5, r), fill=col)
+    return _finish(img)
+
+
+def back_sparkle() -> Image.Image:
+    s = 2
+    W, H = CARD_W * s, CARD_H * s
+    img = Image.new("RGB", (W, H), (6, 4, 6))
+    star = Image.new("L", (W, H), 0)
+    ImageDraw.Draw(star).polygon(_sparkle_pts(W / 2, H / 2, W * .36, H * .4, 400, power=5), fill=255)
+    halo = star.filter(ImageFilter.GaussianBlur(mm(3) * s)).point(lambda v: round(v * .55))
+    img.paste(Image.new("RGB", (W, H), (150, 10, 24)), (0, 0), halo)
+    core = _radial((W, H), (236, 46, 62), (130, 8, 22), power=.6)
+    img.paste(core, (0, 0), star)
+    return _finish(img)
+
+
+def back_gold_stars() -> Image.Image:
+    img, d, s = _canvas((12, 8, 6))
+    W, H = img.width, img.height
+    rnd = random.Random(14)
+    for x, y, r, c in _grid(mm(10.5) * s, W, H):
+        R = rnd.uniform(mm(4), mm(6.2)) * s
+        rot = rnd.uniform(-30, 30)
+        jx, jy = rnd.uniform(-1.6, 1.6) * mm(1) * s, rnd.uniform(-1.6, 1.6) * mm(1) * s
+        for (px, py) in ((x + jx, y + jy),):
+            d.polygon(_star_pts(px, py, R * 1.08, R * .5, 5, rot), fill=(120, 34, 20))
+            d.polygon(_star_pts(px, py, R, R * .46, 5, rot), fill=(250, 214, 96))
+            d.line(_star_pts(px, py, R * .58, R * .27, 5, rot) + [_star_pts(px, py, R * .58, R * .27, 5, rot)[0]],
+                   fill=(150, 50, 24), width=max(2, round(mm(.3) * s)), joint="curve")
+    return _finish(img)
+
+
+def back_gingham() -> Image.Image:
+    img, d, s = _canvas((255, 255, 255))
+    W, H = img.width, img.height
+    band = mm(3.2) * s
+    cx, cy = W / 2, H / 2
+    n = int(max(W, H) / band / 2) + 2
+    for k in range(-n, n + 1):
+        if k % 2:
+            continue
+        x, y = cx + k * band, cy + k * band
+        d.rectangle((x - band / 2, 0, x + band / 2, H), fill=(242, 160, 178, 120))
+        d.rectangle((0, y - band / 2, W, y + band / 2), fill=(242, 160, 178, 120))
+    return _finish(img)
+
+
+def back_forgetmenot() -> Image.Image:
+    img, d, s = _canvas((250, 246, 234))
+    W, H = img.width, img.height
+    rnd = random.Random(31)
+    for a, b in _pairs(rnd, 20, W, H):  # стебли с листиками
+        ln = rnd.uniform(mm(4), mm(7)) * s
+        ang = rnd.uniform(0, 360)
+        for (px, py), r in ((a, ang), (b, ang + 180)):
+            ex, ey = px + math.cos(math.radians(r)) * ln, py + math.sin(math.radians(r)) * ln
+            d.line([(px, py), ((px + ex) / 2 + mm(.8) * s, (py + ey) / 2), (ex, ey)], fill=(132, 160, 100, 255),
+                   width=max(2, round(mm(.25) * s)), joint="curve")
+            lx, ly = (px + ex) / 2, (py + ey) / 2
+            leaf = [(lx + math.cos(t) * mm(1.3) * s, ly + math.sin(t) * mm(.45) * s)
+                    for t in (2 * math.pi * i / 24 for i in range(24))]
+            d.polygon(leaf, fill=(150, 176, 112, 255))
+    for x, y, r, c in _grid(mm(6.4) * s, W, H):
+        jx = ((r * 7 + c * 13) % 5 - 2) * mm(.6) * s
+        jy = ((r * 11 + c * 3) % 5 - 2) * mm(.6) * s
+        R = (mm(1.5) if (r + c) % 3 else mm(1.1)) * s
+        px, py = x + jx, y + jy
+        for i in range(5):
+            a = math.radians(i * 72 + (r * 17 + c * 29) % 72)
+            qx, qy, pr = px + math.cos(a) * R * .55, py + math.sin(a) * R * .55, R * .48
+            d.ellipse((qx - pr, qy - pr, qx + pr, qy + pr), fill=(122, 160, 214, 255))
+        k = R * .22
+        d.ellipse((px - k, py - k, px + k, py + k), fill=(246, 214, 110, 255))
+    return _finish(img)
+
+
+def back_red_hearts() -> Image.Image:
+    img, d, s = _canvas((244, 232, 216))
+    for x, y, r, c in _grid(mm(9) * s, img.width, img.height):
+        _paste_shape(img, _heart, x, y, round(mm(3.8) * s), (150, 14, 20))
+    return _finish(img)
+
+
 BACKS = {  # ключ: (название для клиента, функция)
     "hearts": ("Сердечки", back_hearts),
-    "plaid": ("Шотландка", back_plaid),
-    "night": ("Звёздная ночь", back_night),
-    "dots": ("Мятный горошек", back_dots),
+    "heartwave": ("Сердечный тоннель", back_heartwave),
+    "red_hearts": ("Красные сердца", back_red_hearts),
+    "bows": ("Бантики на бордо", back_bows),
+    "bows_lilac": ("Сиреневые банты", back_bows_lilac),
+    "bows_mint": ("Мятные банты", back_bows_mint),
+    "cherries": ("Вишенки", back_cherries),
+    "gingham": ("Розовая клетка", back_gingham),
+    "forgetmenot": ("Незабудки", back_forgetmenot),
     "flowers": ("Ромашки", back_flowers),
+    "dots": ("Мятный горошек", back_dots),
+    "plaid": ("Шотландка", back_plaid),
+    "celestial": ("Звезда таро", back_celestial),
+    "celestial_rose": ("Розовое таро", back_celestial_rose),
+    "night": ("Звёздная ночь", back_night),
+    "stars_beige": ("Большие звёзды", back_stars_beige),
+    "gold_stars": ("Золотые звёзды", back_gold_stars),
+    "glow_blue": ("Голубое сияние", back_glow_blue),
+    "glow_red": ("Алое сияние", back_glow_red),
+    "sparkle": ("Красная искра", back_sparkle),
 }
 DEFAULT_BACK = "hearts"
 
 
+def backs_for(deck_key: str) -> dict:
+    """Рубашки, доступные для колоды: у UNO свои."""
+    if deck_key == "uno":
+        import uno
+        return uno.BACKS
+    return BACKS
+
+
+def default_back(deck_key: str) -> str:
+    if deck_key == "uno":
+        import uno
+        return uno.DEFAULT_BACK
+    return DEFAULT_BACK
+
+
 def render_back(key: str = DEFAULT_BACK) -> Image.Image:
+    import uno
+    if key in uno.BACKS:
+        return uno.render_back(key)
     return BACKS.get(key, BACKS[DEFAULT_BACK])[1]()
 
 
 def back_title(key: str | None) -> str:
+    import uno
+    if key in uno.BACKS:
+        return uno.BACKS[key][0]
     return BACKS[key][0] if key in BACKS else "Классическая"
 
 
@@ -360,7 +725,13 @@ def save_back_previews(folder: Path, width: int = 240) -> list[Path]:
     """Картинки рубашек для выбора в Mini App."""
     folder.mkdir(parents=True, exist_ok=True)
     out = []
-    for key in BACKS:
+    import uno
+    for key in uno.BACKS:  # у UNO ещё «пустая» рубашка: в Mini App на неё кладутся свой текст и фото
+        img = uno.render_back(key, blank=True).resize((width, round(width * CARD_H / CARD_W)), Image.LANCZOS)
+        path = folder / f"{key}_blank.png"
+        img.save(path, optimize=True)
+        out.append(path)
+    for key in [*BACKS, *uno.BACKS]:
         img = render_back(key)
         img = img.resize((width, round(width * CARD_H / CARD_W)), Image.LANCZOS)
         path = folder / f"{key}.png"
@@ -522,9 +893,14 @@ def layout_sheet(cards: list[Image.Image], mirror: bool = False, bleed: int = 0)
 
 
 def build_deck(template: DeckTemplate, photo_paths: list[Path], out_dir: Path,
-               with_backs: bool = True, back: str = DEFAULT_BACK, style: str = DEFAULT_STYLE) -> list[Path]:
+               with_backs: bool = True, back: str = DEFAULT_BACK, style: str = DEFAULT_STYLE,
+               uno_opts: dict | None = None) -> list[Path]:
     """Рендерит всю колоду. Фото распределяются по картам по кругу.
     Возвращает пути к листам в порядке печати: сначала все лицевые, затем рубашки."""
+    if template.key == "uno":
+        import uno
+        return uno.build_deck(photo_paths, out_dir, with_backs, back if back in uno.BACKS else uno.DEFAULT_BACK,
+                              **(uno_opts or {}))
     out_dir.mkdir(parents=True, exist_ok=True)
     photos = [load_photo(p) for p in photo_paths]
     cards = deck_cards(template)

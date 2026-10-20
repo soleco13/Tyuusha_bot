@@ -15,11 +15,14 @@ const IMG = {
 
 const PRODUCTS = [
   { id: "deck36", cat: "cards", title: "Классическая колода", sub: "36 карт, от шестёрки до туза", price: 990, cards: 36, art: "classic",
-    includes: [["cards", "36 карт 63×88 мм"], ["heart", "Рубашка на выбор: 5 вариантов"], ["stars", "Ваши фото на каждой карте"]],
+    includes: [["cards", "36 карт 63×88 мм"], ["heart", "Рубашка на выбор: 20 вариантов"], ["stars", "Ваши фото на каждой карте"]],
     reqs: ["От 1 до 36 фото: фото распределятся по картам по очереди", "Лучше от 1000 px по короткой стороне", "JPG или PNG до 20 МБ"] },
   { id: "deck54", cat: "cards", title: "Полная колода", sub: "54 карты с двумя джокерами", price: 1290, cards: 54, art: "full",
-    includes: [["cards", "54 карты 63×88 мм"], ["stars", "Два джокера с вашими фото"], ["heart", "Рубашка на выбор: 5 вариантов"]],
+    includes: [["cards", "54 карты 63×88 мм"], ["stars", "Два джокера с вашими фото"], ["heart", "Рубашка на выбор: 20 вариантов"]],
     reqs: ["От 1 до 54 фото", "Лучше от 1000 px по короткой стороне", "JPG или PNG до 20 МБ"] },
+  { id: "uno", cat: "cards", title: "UNO с вашими фото", sub: "108 карт, фото в овале карт с цифрами", price: 1790, cards: 108, maxPhotos: 76, art: "uno",
+    includes: [["cards", "108 карт 63×88 мм, полный набор для игры"], ["stars", "Ваши фото на 76 картах с цифрами"], ["heart", "6 рубашек на выбор"]],
+    reqs: ["От 1 до 76 фото: распределятся по картам с цифрами по очереди", "Лучше от 1000 px по короткой стороне", "JPG или PNG до 20 МБ"] },
   { id: "doc", cat: "doc", title: "Печать документов", sub: "PDF, JPG и PNG на листах A4", priceFrom: "от 8 ₽ за страницу", art: "doc",
     includes: [["doc", "Каждая страница на отдельном листе A4"], ["tune", "Цветная или чёрно-белая печать"], ["copy", "Нужное число копий"]],
     reqs: ["PDF, JPG или PNG до 20 МБ, не больше 100 страниц", "Word и Excel сохраните как PDF", "PDF без пароля"] },
@@ -28,7 +31,7 @@ const PRODUCTS = [
 const byId = (id) => PRODUCTS.find((p) => p.id === id);
 
 let PRICES = {
-  cards: { deck36: 990, deck54: 1290 },
+  cards: { deck36: 990, deck54: 1290, uno: 1790 },
   doc: { color: 15, bw: 8 },
   photo: { "10x15": { color: 30, bw: 20 }, a5: { color: 60, bw: 35 }, a4: { color: 100, bw: 50 } },
   quality_markup: { draft: -20, normal: 0, high: 20 },
@@ -38,7 +41,7 @@ let PRICES = {
 let BACKS = [{ key: "hearts", title: "Сердечки" }, { key: "plaid", title: "Шотландка" }, { key: "night", title: "Звёздная ночь" },
   { key: "dots", title: "Мятный горошек" }, { key: "flowers", title: "Ромашки" }];
 let DEFAULT_BACK = "hearts";
-const backTitle = (key) => (BACKS.find((b) => b.key === key) || BACKS[0]).title;
+const backTitle = (key) => ([...BACKS, ...UNO_BACKS].find((b) => b.key === key) || BACKS[0]).title;
 
 // Оформление лицевой стороны: классическое или фото на всю карту с маленьким ч/б индексом
 let STYLES = [{ key: "classic", title: "Классическая" }, { key: "full", title: "Фото на всю карту" }];
@@ -151,6 +154,164 @@ function playingCard({ rank, suit, ph, zoom = 1, x = 50, y = 50, cls = "", style
   const ix = (side) => `<div class="ix ${side} ${r.length > 1 ? "two" : ""}"><span class="rk">${r}</span><b class="big">${glyph}</b><b class="sm">${glyph}</b></div>`;
   return `<div class="pc ${color} ${cls}" style="${style}"><div class="win" style="${bg}"></div>${ix("")}${ix("r")}</div>`;
 }
+// ---------- конструктор UNO (рисунок как в печати, uno.py) ----------
+
+// Палитры, лимиты надписи и цвета надписей рубашек приходят с сервера; здесь — те же значения по умолчанию
+let UNO = {
+  palettes: [{ key: "pastel", title: "Пастель", colors: ["#4CBED4", "#9CCE4A", "#F69EBE", "#B89CE8"] },
+    { key: "classic", title: "Классика", colors: ["#E8413A", "#F6C431", "#3DAA4B", "#2F7BD9"] },
+    { key: "candy", title: "Конфетная", colors: ["#FF8FAB", "#FFC46B", "#7ED6C1", "#A79BFF"] },
+    { key: "berry", title: "Ягодная", colors: ["#D64570", "#F2A541", "#3FA796", "#6C5CE7"] }],
+  default_palette: "pastel", text_max: 12, caption_max: 22,
+  inks: { uwu_blush: { ink: ["#968C8E", "#3C3638", "#181416"], center: "text", ring: "#F7F0EA" },
+    uwu_sky: { ink: ["#C4E4F6", "#283C50", "#141822"], center: "text", ring: "#282834" },
+    uwu_hot: { ink: ["#FCCC1C", "#E27814", "#6E2814"], center: "text", ring: "#6E1446" },
+    reverse_lilac: { ink: ["#FFFFFF", "#6040A0", "#14121A"], center: "reverse", ring: "#FAF8FE" },
+    reverse_hearts: { ink: ["#FFFFFF", "#D06074", "#28181E"], center: "reverse", ring: "#FFFCFA" },
+    reverse_noir: { ink: ["#ECF0EC", "#606460", "#08080A"], center: "reverse", ring: "#DEE4DE" } },
+};
+let UNO_BACKS = [{ key: "uwu_blush", title: "Пудровая UWU" }, { key: "uwu_sky", title: "Небесная UWU" },
+  { key: "uwu_hot", title: "Малиновая UWU" }, { key: "reverse_lilac", title: "Сиреневый разворот" },
+  { key: "reverse_hearts", title: "Разворот с сердечками" }, { key: "reverse_noir", title: "Чёрный разворот" }];
+let UNO_DEFAULT_BACK = "reverse_lilac";
+const UNO_WILD = { base: "#2C2836", dark: "#100E16" };
+const isUno = (pid) => pid === "uno";
+const backsFor = (pid) => (isUno(pid) ? UNO_BACKS : BACKS);
+const defaultBackFor = (pid) => (isUno(pid) ? UNO_DEFAULT_BACK : DEFAULT_BACK);
+const unoPaletteColors = (key) => (UNO.palettes.find((p) => p.key === key) || UNO.palettes[0]).colors.slice();
+
+// Как palette() на сервере: тёмный контур и светлый ободок считаются от основного цвета
+function unoPalette(colors) {
+  const hex = (h) => [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16));
+  const mix = (a, b, t) => a.map((x, i) => Math.round(x + (b[i] - x) * t));
+  const css = (c) => `rgb(${c.join(",")})`;
+  return colors.map((h) => {
+    const base = hex(h), lum = (0.299 * base[0] + 0.587 * base[1] + 0.114 * base[2]) / 255;
+    return { base: css(base), dark: css(mix(base, [12, 10, 20], 0.5 + 0.18 * lum)), light: css(mix(base, [255, 255, 255], 0.82)) };
+  });
+}
+
+// Та же чистка надписи, что на сервере: только буквы, цифры и простые знаки
+const unoClean = (v, max) => (v || "").replace(/[^0-9A-Za-zА-Яа-яЁё !?.,&+\-'’♥]/g, "").replace(/\s+/g, " ").trim().slice(0, max).trim();
+
+function unoDeck() {
+  const out = [];
+  for (let color = 0; color < 4; color++) {
+    out.push({ rank: "0", color });
+    for (const r of ["1", "2", "3", "4", "5", "6", "7", "8", "9", "skip", "reverse", "draw2"]) out.push({ rank: r, color }, { rank: r, color });
+  }
+  for (let k = 0; k < 4; k++) out.push({ rank: "wild", color: null });
+  for (let k = 0; k < 4; k++) out.push({ rank: "wild4", color: null });
+  return out;
+}
+
+function arrowPts(cx, cy, L, w, ang) {
+  const a = ang * Math.PI / 180, ux = Math.sin(a), uy = -Math.cos(a), vx = -uy, vy = ux, head = L * .46;
+  const t = [cx - ux * L / 2, cy - uy * L / 2], n = [cx + ux * (L / 2 - head), cy + uy * (L / 2 - head)], tip = [cx + ux * L / 2, cy + uy * L / 2];
+  return [[t[0] + vx * w / 2, t[1] + vy * w / 2], [n[0] + vx * w / 2, n[1] + vy * w / 2], [n[0] + vx * w * 1.3, n[1] + vy * w * 1.3], tip,
+    [n[0] - vx * w * 1.3, n[1] - vy * w * 1.3], [n[0] - vx * w / 2, n[1] - vy * w / 2], [t[0] - vx * w / 2, t[1] - vy * w / 2]]
+    .map((p) => p.map((v) => v.toFixed(1)).join(",")).join(" ");
+}
+
+// Значок действия (SVG 100×100): один общий контур, как на печати. cols — 4 цвета палитры для «смены цвета» и «+4»
+function unoSym(kind, fill, dark, ow = 7, cols = []) {
+  const o = `stroke="${dark}" stroke-width="${ow * 2}" stroke-linejoin="round"`;
+  let body = "";
+  if (kind === "skip") {
+    const ring = (s, w) => `<circle cx="50" cy="50" r="30" fill="none" stroke="${s}" stroke-width="${w}"/>`;
+    const bar = (s, w) => `<line x1="31" y1="69" x2="69" y2="31" stroke="${s}" stroke-width="${w}"/>`;
+    body = ring(dark, 12 + ow * 2) + bar(dark, 12 + ow * 2) + ring(fill, 12) + bar(fill, 12);
+  } else if (kind === "reverse") {
+    const up = arrowPts(50 - 10.6 + 4.9, 50 - 10.6 - 4.9, 56, 12, 45), down = arrowPts(50 + 10.6 - 4.9, 50 + 10.6 + 4.9, 56, 12, 225);
+    body = `<polygon points="${up}" fill="${dark}" ${o}/><polygon points="${down}" fill="${dark}" ${o}/>
+      <polygon points="${up}" fill="${fill}"/><polygon points="${down}" fill="${fill}"/>`;
+  } else if (kind === "draw2" || kind === "wild4") {
+    const n = kind === "draw2" ? 2 : 4, cw = n === 2 ? 34 : 25, ch = n === 2 ? 48 : 36;
+    const offs = n === 2 ? [[-9, 7], [9, -7]] : [[-21, 15], [-7, 5], [7, -5], [21, -15]];
+    const fills = n === 2 ? [fill, fill] : cols;
+    body = `<g transform="rotate(12 50 50)">${offs.map(([dx, dy], i) => `<rect x="${50 + dx - cw / 2}" y="${50 + dy - ch / 2}" width="${cw}" height="${ch}" rx="4"
+      fill="${fills[i]}" stroke="${dark}" stroke-width="${ow}" paint-order="stroke"/>`).join("")}</g>`;
+  } else if (kind === "wild") {
+    const R = 42, pie = (i) => { const a0 = (-90 + i * 90) * Math.PI / 180, a1 = (i * 90) * Math.PI / 180;
+      return `<path d="M50 50 L${50 + R * Math.cos(a0)} ${50 + R * Math.sin(a0)} A${R} ${R} 0 0 1 ${50 + R * Math.cos(a1)} ${50 + R * Math.sin(a1)}Z" fill="${cols[i]}"/>`; };
+    body = `<g transform="rotate(28 50 50)"><circle cx="50" cy="50" r="${R + ow}" fill="${dark}"/>${[0, 1, 2, 3].map(pie).join("")}</g>`;
+  }
+  return `<svg viewBox="0 0 100 100" aria-hidden="true">${body}</svg>`;
+}
+
+function unoCard({ rank, color, ph, colors, cls = "", style = "" }) {
+  const pal = unoPalette(colors || unoPaletteColors(UNO.default_palette));
+  const cols = pal.map((p) => p.base);
+  const { base, dark } = color == null ? UNO_WILD : pal[color];
+  const digit = /^\d$/.test(rank);
+  const plus = rank === "draw2" || rank === "wild4";
+  const corner = digit || plus ? `<span>${rank === "draw2" ? "+2" : rank === "wild4" ? "+4" : rank}</span>` : unoSym(rank, "#fff", dark, 9, cols);
+  let mid;
+  if (digit && ph) mid = `<div class="ovi"><div class="ovp" style="${photoStyle(ph)}"></div></div>`;
+  else if (digit) mid = `<b class="big">${rank}</b>`;
+  else mid = `<div class="sym s-${rank}">${unoSym(rank, base, dark, 7, cols)}</div>`;
+  return `<div class="uc u-${color == null ? "wild" : color} ${cls}" style="--b:${base};--d:${dark};${style}"><i class="fr"></i><div class="ov">${mid}</div>
+    <div class="ci ${plus ? "plus" : ""}">${corner}</div><div class="ci r ${plus ? "plus" : ""}">${corner}</div></div>`;
+}
+
+// Рубашка UNO: без своих надписи и фото — готовая картинка; иначе «пустая» рубашка, а сверху фото и надпись.
+// Размер надписи подбирается так же, как на сервере: чтобы с наклоном влезла в ширину карты.
+function unoBack(dk, style = "") {
+  const text = unoClean(dk.backText, UNO.text_max).toUpperCase(), caption = unoClean(dk.backCaption, UNO.caption_max);
+  if (!text && !caption && !dk.backPhoto) return cardBack(dk.back, style);
+  const spec = UNO.inks[dk.back] || UNO.inks[UNO_DEFAULT_BACK];
+  const [fill, shade, outline] = spec.ink;
+  const cos = Math.cos(24 * Math.PI / 180), sin = Math.sin(24 * Math.PI / 180);
+  const fsMax = text.length <= 4 ? 27 : 23.8;
+  let fs = text ? Math.min(fsMax, 88.9 / (1.02 * text.length * cos + 1.25 * sin)) : 0;
+  let cap = caption ? Math.max(5.1, fs * .3) : 0;
+  if (caption) { // подпись тоже должна влезть
+    const capW = .74 * caption.length * cap * cos;
+    if (capW > 88.9) { const k = 88.9 / capW; cap *= k; fs *= k; }
+  }
+  const depth = fs * .13, steps = 7;
+  const shadow = text ? Array.from({ length: steps }, (_, i) => { const k = depth * (i + 1) / steps;
+    return `${(k * .6).toFixed(2)}cqw ${k.toFixed(2)}cqw 0 ${shade}`; }).join(",") : "none";
+  const photo = dk.backPhoto ? `<div class="ubp" style="box-shadow:0 0 0 .56cqw ${spec.ring}"><div class="ovp" style="${photoStyle(dk.backPhoto)}"></div></div>` : "";
+  const word = text ? `<b style="font-size:${fs.toFixed(2)}cqw;color:${fill};-webkit-text-stroke:${(fs / 8).toFixed(2)}cqw ${outline};text-shadow:${shadow}">${esc(text)}</b>` : "";
+  const sub = caption ? `<small style="font-size:${cap.toFixed(2)}cqw;-webkit-text-stroke:${(cap / 4.5).toFixed(2)}cqw ${outline}">${esc(caption)}</small>` : "";
+  return `<div class="pc back ub" style="background-image:url('img/backs/${dk.back}_blank.png');${style}">${photo}
+    ${word || sub ? `<div class="ubt">${word}${sub}</div>` : ""}</div>`;
+}
+
+// Экран UNO в конструкторе: цвета, рубашка, надпись и фото на рубашке
+function unoDesigner(dk) {
+  const pal = unoPalette(dk.colors);
+  return `<div class="h-section"><h2>Цвета карт <span class="muted" style="font-weight:500">· ${esc(dk.palette === "custom" ? "свои" : (UNO.palettes.find((p) => p.key === dk.palette) || {}).title || "")}</span></h2></div>
+    <div class="palettes" role="radiogroup" aria-label="Палитра карт">${UNO.palettes.map((p) => `<button class="pal-opt ${p.key === dk.palette ? "on" : ""}" role="radio"
+      aria-checked="${p.key === dk.palette}" data-act="uno-palette" data-value="${p.key}"><span class="dots">${p.colors.map((c) => `<i style="background:${c}"></i>`).join("")}</span>${esc(p.title)}</button>`).join("")}</div>
+    <div class="swatches">${dk.colors.map((c, i) => `<label class="swatch" style="--c:${c};--d:${pal[i].dark}" aria-label="Цвет ${i + 1}">
+      <input type="color" value="${c}" data-model="deck.colors.${i}"><span>${i + 1}</span></label>`).join("")}
+      <span class="small muted">Нажмите на кружок, чтобы выбрать свой цвет. Контуры и оттенки Тюша подберёт сама.</span></div>
+    <div class="uno-preview">${[["7", 0], ["skip", 1], ["draw2", 2], ["reverse", 3]].map(([r, c], k) => unoCard({ rank: r, color: c, ph: k === 0 ? dk.photos[0] : null, colors: dk.colors })).join("")}</div>`;
+}
+
+function unoBackEditor(dk) {
+  const tmax = UNO.text_max, cmax = UNO.caption_max;
+  const tlen = (dk.backText || "").length, clen = (dk.backCaption || "").length;
+  return `<div class="h-section"><h2>Надпись и фото на рубашке</h2></div>
+    <div class="ub-edit">
+      <div class="ub-prev">${unoBack(dk, "position:relative;aspect-ratio:63/88")}</div>
+      <div class="ub-fields">
+        <label class="field"><span class="lbl">Надпись <span class="muted tabular">${tlen}/${tmax}</span></span>
+          <input class="input" type="text" maxlength="${tmax}" placeholder="${(UNO.inks[dk.back] || {}).center === "text" ? "UWU" : "Например, СЕМЬЯ"}" value="${esc(dk.backText || "")}" data-model="deck.backText" autocomplete="off"></label>
+        <label class="field"><span class="lbl">Подпись под ней <span class="muted tabular">${clen}/${cmax}</span></span>
+          <input class="input" type="text" maxlength="${cmax}" placeholder="Например, Новый год 2026" value="${esc(dk.backCaption || "")}" data-model="deck.backCaption" autocomplete="off"></label>
+        <div class="row" style="gap:8px;flex-wrap:wrap">
+          <label class="btn soft sm" style="position:relative;overflow:hidden">${icon("photo")}${dk.backPhoto ? "Заменить фото" : "Фото на рубашку"}
+            <input type="file" data-file="unoback" accept="image/jpeg,image/png" style="position:absolute;inset:0;opacity:0"></label>
+          ${dk.backPhoto ? `<button class="btn ghost sm" data-act="uno-back-photo-off">Убрать фото</button>` : ""}
+        </div>
+      </div>
+    </div>
+    <div class="small muted">Надпись можно не писать. Буквы, цифры и простые знаки; размер подстроится сам, чтобы всё влезло. Фото встанет в овал рубашки.</div>`;
+}
+
 const cardBack = (key = DEFAULT_BACK, style = "") => `<div class="pc back" style="background-image:url('img/backs/${key}.png');${style}"></div>`;
 
 function productArt(p, big = false) {
@@ -160,10 +321,11 @@ function productArt(p, big = false) {
   if (p.art === "full") return `<div class="fan">${playingCard({ rank: "JOKER", ph: sample(2) })}${playingCard({ rank: "К", suit: 2, ph: sample(1) })}${cardBack("night")}</div>`;
   if (p.art === "dates") return `<div class="fan"><div class="pc q"><span>${esc(QUESTIONS[1])}</span></div><div class="pc q"><span>${esc(QUESTIONS[0])}</span></div><div class="pc q"><span>${esc(QUESTIONS[2])}</span></div></div>`;
   if (p.art === "memory") return `<div class="fan" style="aspect-ratio:1;width:44%">${[0, 0, 1].map((i) => `<div class="pc memo"><div class="win" style="${photoStyle(sample(i))};inset:8%"></div></div>`).join("")}</div>`;
+  if (p.art === "uno") return `<div class="fan">${cardBack("reverse_lilac")}${unoCard({ rank: "7", color: 2, ph: sample(0) })}${unoCard({ rank: "reverse", color: 0 })}</div>`;
   if (p.art === "doc") return `<div class="fan" style="aspect-ratio:210/297;width:44%"><div class="page"></div><div class="page"></div><div class="page"><b>1</b></div></div>`;
   return `<div class="fan" style="aspect-ratio:1;width:46%">${[2, 1, 0].map((i) => `<div class="pc memo" style="border-radius:6%"><div class="win" style="${photoStyle(sample(i))};inset:6%;outline:0;border-radius:3%"></div></div>`).join("")}</div>`;
 }
-const artBg = { classic: "#E4ECFD", full: "#EDE7F8", dates: "#FBE6EA", memory: "#E3F3EC", doc: "#EEF1F7", photo: "#FDF1DA" };
+const artBg = { classic: "#E4ECFD", full: "#EDE7F8", uno: "#FCE8F0", dates: "#FBE6EA", memory: "#E3F3EC", doc: "#EEF1F7", photo: "#FDF1DA" };
 
 // ---------- расчёт цены ----------
 
@@ -190,6 +352,13 @@ function quoteDeck(dk) {
 
 function deckLayout(dk) {
   const p = byId(dk.pid);
+  if (isUno(p.id)) {  // фото только на картах с цифрами, по очереди
+    let k = 0;
+    return unoDeck().map((c, i) => {
+      const photoIndex = /^\d$/.test(c.rank) && dk.photos.length ? k++ % dk.photos.length : null;
+      return { ...c, i, o: {}, uno: true, colors: dk.colors, ph: photoIndex == null ? null : dk.photos[photoIndex], photoIndex };
+    });
+  }
   const cards = [];
   const ranks = p.id === "deck54" ? RANKS54 : RANKS36;
   SUITS.forEach((_, s) => ranks.forEach((r) => cards.push({ rank: r, suit: s })));
@@ -364,8 +533,8 @@ SCREENS.home = () => {
       <div class="row"><span class="tile-icon pink">${icon("pen")}</span>
         <div class="grow"><div class="eyebrow">Продолжить</div><div style="font-weight:650">${esc(state.draft.title)}</div>
           <div class="small muted">${esc(draftP.title)} · сохранено ${esc(state.draft.updated)}</div></div>${icon("next")}</div>
-      <div class="row small"><div class="grow progress"><i style="width:${Math.round(state.draft.photos / draftP.cards * 100)}%"></i></div>
-        <span class="muted tabular">${state.draft.photos} из ${draftP.cards} фото</span></div>
+      <div class="row small"><div class="grow progress"><i style="width:${Math.round(state.draft.photos / (draftP.maxPhotos || draftP.cards) * 100)}%"></i></div>
+        <span class="muted tabular">${state.draft.photos} из ${draftP.maxPhotos || draftP.cards} фото</span></div>
     </button>` : ""}
     ${active ? `<button class="card pressable" data-go="order" data-id="${active.id}" style="text-align:left">
       <div class="row">${orderThumb(active)}<div class="grow"><div class="eyebrow">Заказ №${active.id}</div>
@@ -489,7 +658,9 @@ SCREENS.deck = () => {
   const p = byId(dk.pid);
   const layout = deckLayout(dk);
   const bad = dk.photos.filter(lowRes).length;
-  const maxPhotos = p.cards;
+  const maxPhotos = p.maxPhotos || p.cards;
+  const uno = isUno(p.id);
+  const backs = backsFor(p.id);
   return {
     html: `${topbar(p.title, dk.saved ? "Черновик сохранён" : "")}
     ${steps(["Фото", "Макет", "Проверка", "Заказ"], dk.photos.length ? 1 : 0)}
@@ -498,9 +669,9 @@ SCREENS.deck = () => {
     <div class="photos">${dk.photos.map((ph, i) => `<button class="photo ${state.swapFrom === i ? "sel" : ""}" style="${photoStyle(ph)}" data-act="swap" data-i="${i}" aria-label="Фото ${i + 1}">
         <span class="n">${i + 1}</span>${lowRes(ph) ? `<span class="bad">${icon("warn")}</span>` : ""}</button>`).join("")}
       ${dk.photos.length < maxPhotos ? `<label class="photo add" aria-label="Добавить фото"><input type="file" id="deck-files" accept="image/jpeg,image/png" multiple data-file="deck">${icon("upload", "lg")}</label>` : ""}</div>
-    <div class="small muted">${state.swapFrom != null ? "Теперь нажмите на фото, с которым поменять местами." : "Нажмите на два фото, чтобы поменять их местами. Фото ложатся на карты по очереди."}</div>
+    <div class="small muted">${state.swapFrom != null ? "Теперь нажмите на фото, с которым поменять местами." : `Нажмите на два фото, чтобы поменять их местами. ${uno ? "Фото ложатся на карты с цифрами по очереди." : "Фото ложатся на карты по очереди."}`}</div>
     ${bad ? `<div class="notice warn">${icon("warn")}<div><b>${bad} ${plural(bad, "фото", "фото", "фото")} с низким разрешением</b><span>Отмечены значком. На карте 63×88 мм такое фото может выйти нерезким.</span></div></div>` : ""}
-    <div class="h-section"><h2>Оформление</h2></div>
+    ${uno ? "" : `<div class="h-section"><h2>Оформление</h2></div>
     <div class="styles" role="radiogroup" aria-label="Оформление карт">${STYLES.map((st) => `<button class="style-opt ${st.key === dk.style ? "on" : ""}" role="radio"
       aria-checked="${st.key === dk.style}" data-act="set" data-model="deck.style" data-value="${st.key}">
       <span class="style-cards">${st.key === "full"
@@ -508,13 +679,15 @@ SCREENS.deck = () => {
         : playingCard({ rank: "В", suit: 1, ph: dk.photos[0] }) + playingCard({ rank: "7", suit: 3, ph: dk.photos[1] || dk.photos[0] })}</span>
       <span class="t">${esc(st.title)}</span>
       <span class="s">${st.key === "full" ? "Фото до краёв, маленький ч/б знак в углу" : "Фото в центре, ранг и масть в углах"}</span></button>`).join("")}</div>
-    ${dk.style === "full" ? `<div class="small muted">Чёрные масти Тюша ставит на светлые фото, белые — на тёмные, чтобы знак всегда читался.</div>` : ""}
+    ${dk.style === "full" ? `<div class="small muted">Чёрные масти Тюша ставит на светлые фото, белые — на тёмные, чтобы знак всегда читался.</div>` : ""}`}
+    ${uno ? unoDesigner(dk) : ""}
     <div class="h-section"><h2>Рубашка <span class="muted" style="font-weight:500">· ${esc(backTitle(dk.back))}</span></h2></div>
-    <div class="backs" role="radiogroup" aria-label="Рубашка карт">${BACKS.map((b) => `<button class="back-opt ${b.key === dk.back ? "on" : ""}" role="radio"
-      aria-checked="${b.key === dk.back}" data-act="set" data-model="deck.back" data-value="${b.key}">${cardBack(b.key)}<span>${esc(b.title)}</span></button>`).join("")}</div>
+    <div class="backs" role="radiogroup" aria-label="Рубашка карт">${backs.map((b) => `<button class="back-opt ${b.key === dk.back ? "on" : ""}" role="radio"
+      aria-checked="${b.key === dk.back}" data-act="set" data-model="deck.back" data-value="${b.key}">${uno ? unoBack({ ...dk, back: b.key }) : cardBack(b.key)}<span>${esc(b.title)}</span></button>`).join("")}</div>
+    ${uno ? unoBackEditor(dk) : ""}
     <div class="h-section"><h2>Макет · ${layout.length} ${plural(layout.length, "карта", "карты", "карт")}</h2></div>
     <div class="deck">${layout.map((c) =>
-      `<div style="display:block;animation:deal .5s var(--spring) both;animation-delay:${Math.min(c.i * 12, 400)}ms">${playingCard({ rank: c.rank, suit: c.suit, ph: c.ph, full: c.full, ink: c.ink, style: "position:relative;aspect-ratio:63/88" })}</div>`).join("")}</div>`,
+      `<div style="display:block;animation:deal .5s var(--spring) both;animation-delay:${Math.min(c.i * 12, 400)}ms">${c.uno ? unoCard({ ...c, style: "position:relative;aspect-ratio:63/88" }) : playingCard({ rank: c.rank, suit: c.suit, ph: c.ph, full: c.full, ink: c.ink, style: "position:relative;aspect-ratio:63/88" })}</div>`).join("")}</div>`,
     dock: dockBar(quoteDeck(dk).total, "Проверить макет", "review-deck", { disabled: !dk.photos.length }),
   };
 };
@@ -528,11 +701,18 @@ function reviewData() {
     const warns = [];
     const bad = dk.photos.filter(lowRes).length;
     if (bad) warns.push(["warn", `${bad} ${plural(bad, "фото", "фото", "фото")} с низким разрешением`, "Может выйти нерезко. Вернитесь, чтобы заменить, или оставьте как есть."]);
-    if (dk.photos.length < p.cards) warns.push(["info", `Фото: ${dk.photos.length} из ${p.cards}`, "Если фото меньше, чем карт, они повторятся по кругу."]);
+    const maxPh = p.maxPhotos || p.cards;
+    if (dk.photos.length < maxPh) warns.push(["info", `Фото: ${dk.photos.length} из ${maxPh}`, isUno(p.id) ? "Если фото меньше, чем карт с цифрами, они повторятся по кругу." : "Если фото меньше, чем карт, они повторятся по кругу."]);
     return { p, q, title: p.title, flow: ["Фото", "Макет", "Проверка", "Заказ"],
-      rows: [["Набор", p.title], ["Карт", String(p.cards)], ["Фото", String(dk.photos.length)], ["Оформление", styleTitle(dk.style)], ["Рубашка", backTitle(dk.back)]],
+      rows: [["Набор", p.title], ["Карт", String(p.cards)], ["Фото", String(dk.photos.length)], ...(isUno(p.id) ? [["Цвета", dk.palette === "custom" ? "свои" : (UNO.palettes.find((x) => x.key === dk.palette) || {}).title || ""]] : [["Оформление", styleTitle(dk.style)]]),
+        ["Рубашка", backTitle(dk.back)],
+        ...(isUno(p.id) && (unoClean(dk.backText, UNO.text_max) || unoClean(dk.backCaption, UNO.caption_max))
+          ? [["Надпись", [unoClean(dk.backText, UNO.text_max).toUpperCase(), unoClean(dk.backCaption, UNO.caption_max)].filter(Boolean).join(" · ")]] : []),
+        ...(isUno(p.id) && dk.backPhoto ? [["Фото на рубашке", "своё"]] : [])],
       warns, agree: "Макет проверен. После оформления заказ уйдёт оператору.",
-      art: `<div class="row" style="gap:8px;justify-content:center"><div style="width:28%">${cardBack(dk.back, "position:relative;aspect-ratio:63/88")}</div>${deckLayout(dk).slice(0, 2).map((c) => c.memo
+      art: `<div class="row" style="gap:8px;justify-content:center"><div style="width:28%">${isUno(p.id) ? unoBack(dk, "position:relative;aspect-ratio:63/88") : cardBack(dk.back, "position:relative;aspect-ratio:63/88")}</div>${(isUno(p.id) ? deckLayout(dk).filter((c, i) => i === 1 || c.rank === "reverse").slice(0, 2) : deckLayout(dk).slice(0, 2)).map((c) => c.uno
+        ? `<div style="width:28%">${unoCard({ ...c, style: "position:relative;aspect-ratio:63/88" })}</div>`
+        : c.memo
         ? `<div class="pc memo" style="width:30%;position:relative"><div class="win" style="${photoStyle(c.ph)};inset:8%"></div></div>`
         : `<div style="width:28%">${playingCard({ rank: c.rank, suit: c.suit, ph: c.ph, full: c.full, ink: c.ink, zoom: c.o.zoom || 1, x: c.o.x ?? 50, y: c.o.y ?? 50, style: "position:relative;aspect-ratio:63/88" })}</div>`).join("")}</div>` };
   }
@@ -793,6 +973,13 @@ const ACT = {
   back,
   home: () => { state.stack = []; state.tab = "home"; render("tab"); window.scrollTo(0, 0); },
   tab: (el) => goTab(el.dataset.tab),
+  "uno-palette": (el) => {
+    state.deck.palette = el.dataset.value;
+    state.deck.colors = unoPaletteColors(el.dataset.value);
+    haptic("select");
+    render();
+  },
+  "uno-back-photo-off": () => { state.deck.backPhoto = null; haptic("select"); render(); },
   set: (el) => {
     setPath(el.dataset.model, el.dataset.value);
     if (el.dataset.model === "theme") { store("theme", state.theme); applyTheme(); }
@@ -854,7 +1041,7 @@ const ACT = {
   },
   repeat: (el) => {
     const o = state.orders.find((x) => x.id === +el.dataset.id);
-    if (o.kind === "cards") { startDeck(o.title.includes("36") || o.sub.startsWith("36") ? "deck36" : "deck54"); push("deck"); }
+    if (o.kind === "cards") { startDeck(o.title.includes("UNO") ? "uno" : o.title.includes("36") || o.sub.startsWith("36") ? "deck36" : "deck54"); push("deck"); }
     else if (o.kind === "doc") ACT["go-doc"]();
     else ACT["go-photo"]();
     toast(o.kind === "doc" ? "Выберите файл — это будет новый заказ" : "Добавьте фото — это будет новый заказ");
@@ -867,7 +1054,8 @@ const ACT = {
 
 function startDeck(pid, photosCount) {
   if (!state.deck || state.deck.pid !== pid) {
-    state.deck = { pid, photos: [], edits: {}, saved: false, back: DEFAULT_BACK, style: DEFAULT_STYLE };
+    state.deck = { pid, photos: [], edits: {}, saved: false, back: defaultBackFor(pid), style: DEFAULT_STYLE,
+      palette: UNO.default_palette, colors: unoPaletteColors(UNO.default_palette), backText: "", backCaption: "", backPhoto: null };
   }
   state.swapFrom = null;
 }
@@ -930,6 +1118,8 @@ async function loadConfig() {
     const c = await api("/mapi/config");
     PRICES = c.prices;
     if (Array.isArray(c.backs) && c.backs.length) { BACKS = c.backs; DEFAULT_BACK = c.default_back || BACKS[0].key; }
+    if (c.uno && Array.isArray(c.uno.palettes)) UNO = { ...UNO, ...c.uno, inks: { ...UNO.inks, ...Object.fromEntries(Object.entries(c.uno.inks || {}).map(([k, v]) => [k, { ...UNO.inks[k], ...v }])) } };
+    if (Array.isArray(c.uno_backs) && c.uno_backs.length) { UNO_BACKS = c.uno_backs; UNO_DEFAULT_BACK = c.uno_default_back || UNO_BACKS[0].key; }
     if (Array.isArray(c.styles) && c.styles.length) { STYLES = c.styles; DEFAULT_STYLE = c.default_style || STYLES[0].key; }
     PRODUCTS.forEach((p) => { if (PRICES.cards[p.id]) p.price = PRICES.cards[p.id]; });
     const min = Math.min(...Object.values(PRICES.photo).flatMap((f) => Object.values(f)));
@@ -960,7 +1150,8 @@ async function placeOrder() {
   const isDeck = r.kind === "deck", isDoc = r.kind === "doc";
   const list = isDoc ? [] : isDeck ? state.deck.photos : state.photoJob.photos;
   const meta = isDoc ? { kind: "doc", copies: state.docJob.copies, color: state.docJob.color }
-    : isDeck ? { kind: "cards", deck: state.deck.pid, back: state.deck.back || DEFAULT_BACK, style: state.deck.style || DEFAULT_STYLE }
+    : isDeck ? { kind: "cards", deck: state.deck.pid, back: state.deck.back || DEFAULT_BACK, style: state.deck.style || DEFAULT_STYLE,
+      ...(isUno(state.deck.pid) ? { colors: state.deck.colors, back_text: state.deck.backText, back_caption: state.deck.backCaption } : {}) }
     : { kind: "photo", format: state.photoJob.format, copies: state.photoJob.copies, color: state.photoJob.color, quality: state.photoJob.quality };
   state.placing = true;
   state.uploadPct = 5;
@@ -970,6 +1161,7 @@ async function placeOrder() {
     const form = new FormData();
     form.append("meta", JSON.stringify(meta));
     if (isDoc) form.append("document", state.docJob.file, state.docJob.name);
+    if (isDeck && isUno(state.deck.pid) && state.deck.backPhoto) form.append("back_photo", await prepareUpload(state.deck.backPhoto, 2200), "back.jpg");
     const maxSide = isDeck ? 2200 : 3600;
     for (let i = 0; i < list.length; i++) {
       form.append("photo", await prepareUpload(list[i], maxSide), `photo_${i + 1}.jpg`);
@@ -1025,6 +1217,16 @@ async function onDocFile(file) {
 }
 async function onPhotoFiles(files, target) {
   if (target === "doc") return onDocFile(files[0]);
+  if (target === "unoback") {
+    const f = files[0];
+    if (!/image\/(jpeg|png)/.test(f.type)) return toast("Для рубашки подойдёт JPG или PNG", "no");
+    if (f.size > 20 * 1048576) return toast(`${f.name}: больше 20 МБ`, "no");
+    const url = URL.createObjectURL(f);
+    const [w, h] = await imageSize(url);
+    state.deck.backPhoto = { url, w, h, name: f.name, file: f };
+    haptic("success");
+    return render();
+  }
   const list = [...files].filter((f) => /image\/(jpeg|png)/.test(f.type));
   if (list.length < files.length) toast("Часть файлов пропущена: принимаем JPG и PNG", "no");
   for (const f of list) {
@@ -1033,7 +1235,7 @@ async function onPhotoFiles(files, target) {
     const [w, h] = await imageSize(url);
     const ph = { url, w, h, name: f.name, file: f, lum: target === "deck" ? await cornerLuminance(url) : undefined };
     if (target === "deck") {
-      const max = byId(state.deck.pid).cards;
+      const max = byId(state.deck.pid).maxPhotos || byId(state.deck.pid).cards;
       if (state.deck.photos.length >= max) break;
       state.deck.photos.push(ph);
       saveDraft();
@@ -1060,7 +1262,12 @@ document.addEventListener("click", (e) => {
 
 document.addEventListener("input", (e) => {
   const el = e.target;
-  if (el.dataset.model) { setPath(el.dataset.model, el.value); render(); return; }
+  if (el.dataset.model) {
+    setPath(el.dataset.model, el.value);
+    if (el.dataset.model.startsWith("deck.colors.")) state.deck.palette = "custom";
+    render();
+    return;
+  }
   if (el.dataset.edit) {
     const i = +el.dataset.i, dk = state.deck;
     const val = el.dataset.edit === "cap" ? el.value : +el.value;

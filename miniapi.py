@@ -28,7 +28,7 @@ log = logging.getLogger("miniapi")
 INIT_DATA_TTL = 24 * 3600
 MAX_FILE = 20 * 1024 * 1024
 MAX_PIXELS = 60_000_000
-MAX_PHOTOS = {"deck36": 36, "deck54": 54}
+MAX_PHOTOS = {"deck36": 36, "deck54": 54, "uno": 76}
 MAX_PHOTO_JOB = 54
 MAX_COPIES_DOC = 20
 MAX_OPEN_ORDERS = 5  # заказов «new» от одного клиента одновременно
@@ -89,6 +89,14 @@ def _public(o: dict) -> dict:
             "events": [{"at": e["at"], "text": e["text"]} for e in events if e["actor"] != "admin" or e["kind"] != "info"][-10:]}
 
 
+def _uno_config() -> dict:
+    import uno
+    return {"palettes": [{"key": k, "title": t, "colors": c} for k, (t, c) in uno.PALETTES.items()],
+            "default_palette": uno.DEFAULT_PALETTE, "text_max": uno.TEXT_MAX, "caption_max": uno.CAPTION_MAX,
+            "inks": {k: {"ink": ["#%02X%02X%02X" % c for c in s["ink"]], "center": s["center"]}
+                     for k, s in uno.BACK_SPECS.items()}}
+
+
 def _own_order(request: web.Request, user: dict) -> dict:
     try:
         order = service.get(int(request.match_info["id"]))
@@ -104,6 +112,9 @@ async def get_config(request: web.Request) -> web.Response:
     return web.json_response({"ok": True, "prices": pricing.get_prices(), "max_photos": MAX_PHOTOS,
                               "max_photo_job": MAX_PHOTO_JOB, "default_back": cards.DEFAULT_BACK,
                               "backs": [{"key": k, "title": t} for k, (t, _) in cards.BACKS.items()],
+                              "uno_backs": [{"key": k, "title": t} for k, (t, _) in cards.backs_for("uno").items()],
+                              "uno_default_back": cards.default_back("uno"),
+                              "uno": _uno_config(),
                               "styles": [{"key": k, "title": t} for k, t in cards.STYLES.items()],
                               "default_style": cards.DEFAULT_STYLE})
 
@@ -183,12 +194,18 @@ async def create_order(request: web.Request) -> web.Response:
     _placing.add(uid)
     session_dir = config.SESSIONS_DIR / f"m{uid}_{uuid.uuid4().hex[:8]}"
     try:
-        meta, files = None, []
+        meta, files, back_photo = None, [], None
         session_dir.mkdir(parents=True)
         reader = await request.multipart()
         while (part := await reader.next()) is not None:
             if part.name == "meta":
                 meta = json.loads(await part.text())
+            elif part.name == "back_photo":
+                if back_photo:
+                    raise service.ServiceError("Фото для рубашки можно загрузить только одно")
+                back_photo = session_dir / "back_photo"
+                await _save_part(part, back_photo, MAX_FILE, "Фото рубашки")
+                _check_image(back_photo)
             elif part.name == "document":
                 if files:
                     raise service.ServiceError("Документ можно загрузить только один")
@@ -219,13 +236,19 @@ async def create_order(request: web.Request) -> web.Response:
                 raise service.ServiceError("Неизвестная колода")
             if len(files) > MAX_PHOTOS[deck]:
                 raise service.ServiceError(f"Для этой колоды — не больше {MAX_PHOTOS[deck]} фото")
-            back = meta.get("back") or cards.DEFAULT_BACK
-            if back not in cards.BACKS:
+            back = meta.get("back") or cards.default_back(deck)
+            if back not in cards.backs_for(deck):
                 raise service.ServiceError("Неизвестная рубашка")
-            style = meta.get("style") or cards.DEFAULT_STYLE
+            style = (meta.get("style") or cards.DEFAULT_STYLE) if deck != "uno" else cards.DEFAULT_STYLE
             if style not in cards.STYLES:
                 raise service.ServiceError("Неизвестное оформление карт")
             params = {"deck": deck, "back": back, "style": style}
+            if deck == "uno":
+                import uno
+                params.update(colors=uno.clean_colors(meta.get("colors")),
+                              back_text=uno.clean_text(meta.get("back_text"), uno.TEXT_MAX).upper(),
+                              back_caption=uno.clean_text(meta.get("back_caption"), uno.CAPTION_MAX),
+                              back_photo=bool(back_photo))
         elif kind == "photo":
             fmt, copies = meta.get("format"), int(meta.get("copies", 1))
             quality = meta.get("quality", "high")
@@ -246,8 +269,12 @@ async def create_order(request: web.Request) -> web.Response:
         out = session_dir / "print"
         async with _render_slot:
             if kind == "cards":
+                uno_opts = None
+                if params["deck"] == "uno":
+                    uno_opts = {"colors": params["colors"], "back_text": params["back_text"],
+                                "back_caption": params["back_caption"], "back_photo": back_photo}
                 pages = await asyncio.to_thread(cards.build_deck, cards.DECKS[params["deck"]], files, out,
-                                                back=params["back"], style=params["style"])
+                                                back=params["back"], style=params["style"], uno_opts=uno_opts)
                 params.update(sheets=len(pages) // 2, color=True, quality="high")
                 previews = [pages[0], pages[len(pages) // 2]]
             elif kind == "doc":

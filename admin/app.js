@@ -767,6 +767,7 @@ async function renderPrices() {
       <section class="card"><h3>Игральные карты</h3>
         <div class="price-row"><span>Колода 36 карт</span>${money("cards.deck36", prices.cards.deck36)}</div>
         <div class="price-row"><span>Колода 54 карты</span>${money("cards.deck54", prices.cards.deck54)}</div>
+        <div class="price-row"><span>Колода UNO, 108 карт</span>${money("cards.uno", prices.cards.uno)}</div>
       </section>
       <section class="card"><h3>Фото — за один отпечаток</h3>
         ${Object.keys(prices.photo).map((f) => `

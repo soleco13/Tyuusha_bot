@@ -69,7 +69,15 @@ def get(order_id: int) -> dict:
 def describe(kind: str, p: dict) -> str:
     if kind == "cards":
         deck = cards.DECKS[p["deck"]]
-        return (f"🃏 {deck.title}\nФото: {p['photos']} шт.\nОформление: {cards.style_title(p.get('style'))}\nРубашка: {cards.back_title(p.get('back'))}\n"
+        style = "" if p["deck"] == "uno" else f"Оформление: {cards.style_title(p.get('style'))}\n"
+        if p["deck"] == "uno":
+            extra = [f"Цвета: {' '.join(p.get('colors') or [])}"]
+            if p.get("back_text") or p.get("back_caption"):
+                extra.append("Надпись: " + " · ".join(x for x in (p.get("back_text"), p.get("back_caption")) if x))
+            if p.get("back_photo"):
+                extra.append("Своё фото на рубашке")
+            style = "\n".join(extra) + "\n"
+        return (f"🃏 {deck.title}\nФото: {p['photos']} шт.\n{style}Рубашка: {cards.back_title(p.get('back'))}\n"
                 f"Листов A4: {p['sheets']} лицевых + {p['sheets']} рубашек\nПечать: цветная, высокое качество")
     if kind == "doc":
         return (f"📄 Документ: {p['doc_pages']} стр. × {p['copies']} коп.\n"
