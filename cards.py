@@ -745,7 +745,7 @@ def save_back_previews(folder: Path, width: int = 240) -> list[Path]:
 # только чёрный или белый. Пики и трефы — чёрным, черви и бубны — белым. Фото раскладываются так,
 # чтобы под чёрным индексом было светлое место, а под белым — тёмное.
 
-STYLES = {"classic": "Классическая", "full": "Фото на всю карту"}
+STYLES = {"classic": "Классическая", "full": "Фото на всю карту", "vintage": "Старинная"}
 DEFAULT_STYLE = "classic"
 
 FULL_INDEX_BOX = (0, 0, mm(17), mm(23))   # угол, где стоит индекс: по нему меряем яркость фото
@@ -830,6 +830,60 @@ def render_card_full(card: Card, fitted: Image.Image, lum: float) -> Image.Image
     return img.convert("RGB")
 
 
+# ---------- оформление «Старинная» ----------
+# Как типографская колода: кремовая бумага, тонкая рамка по центру, крупный засечный индекс (ранг над мастью).
+# В рамке у валета, дамы и короля — фигуры из открытой колоды SaulSpatz/SVGCards (public domain,
+# фигуры Byron Knoll), заранее растеризованные в assets/vintage; у остальных карт — фото клиента.
+
+VINTAGE_DIR = Path(__file__).resolve().parent / "assets" / "vintage"
+VINTAGE_PAPER = (253, 252, 238)
+VINTAGE_FRAME = (mm(13.5), round((CARD_H - mm(36) * 707 / 425) / 2), CARD_W - mm(13.5),
+                 round((CARD_H + mm(36) * 707 / 425) / 2))   # рамка 36 мм, пропорции фигур колоды
+COURT_FILES = {"В": "J", "Д": "Q", "К": "K"}
+
+
+def is_court(card: Card) -> bool:
+    return card.suit is not None and card.rank in COURT_FILES
+
+
+def _vintage_index(card: Card, color) -> Image.Image:
+    """Крупный индекс: ранг, под ним масть — как на картах для пасьянса и покера с «jumbo index»."""
+    rank = "J" if card.suit is None else card.rank
+    layer = Image.new("RGBA", (mm(11), mm(19)), (0, 0, 0, 0))
+    d = ImageDraw.Draw(layer)
+    f = serif_font(mm(9.4) if len(rank) == 1 else mm(7.4))
+    cx = layer.width // 2
+    d.text((cx, 0), rank, font=f, fill=color, anchor="mt")
+    bottom = d.textbbox((cx, 0), rank, font=f, anchor="mt")[3]
+    suit = suit_image(card.suit or "joker", mm(6.6), color)
+    layer.alpha_composite(suit, (cx - suit.width // 2, bottom + mm(1)))
+    return layer
+
+
+def render_card_vintage(card: Card, photo: Image.Image | None) -> Image.Image:
+    color = (RED if card.suit in ("hearts", "diamonds") else BLACK) if card.suit else JOKER_RED
+    img = Image.new("RGB", (CARD_W, CARD_H), VINTAGE_PAPER)
+    box = VINTAGE_FRAME
+    size = (box[2] - box[0], box[3] - box[1])
+    art = None
+    if is_court(card):
+        path = VINTAGE_DIR / f"{card.suit}_{COURT_FILES[card.rank]}.png"
+        if path.exists():
+            art = Image.open(path).convert("RGB").resize(size, Image.LANCZOS)
+    if art is None and photo is not None:
+        art = ImageOps.fit(photo, size, Image.LANCZOS, centering=(0.5, 0.42))
+    if art is not None:
+        img.paste(art, box[:2])
+    d = ImageDraw.Draw(img)
+    d.rectangle((box[0] - mm(.25), box[1] - mm(.25), box[2] + mm(.25) - 1, box[3] + mm(.25) - 1),
+                outline=(20, 20, 20), width=mm(.3))
+    index = _vintage_index(card, color)
+    img.paste(index, (mm(2.2), mm(2.6)), index)
+    flipped = index.rotate(180)
+    img.paste(flipped, (CARD_W - flipped.width - mm(2.2), CARD_H - flipped.height - mm(2.6)), flipped)
+    return img
+
+
 def style_title(key: str | None) -> str:
     return STYLES.get(key or DEFAULT_STYLE, STYLES[DEFAULT_STYLE])
 
@@ -909,6 +963,15 @@ def build_deck(template: DeckTemplate, photo_paths: list[Path], out_dir: Path,
         lums = [corner_luminance(f) for f in fitted]
         order = assign_by_light(cards, lums)
         faces = [render_card_full(card, fitted[k], lums[k]) for card, k in zip(cards, order)]
+    elif style == "vintage":  # у фигур — рисунок колоды, фото по очереди на остальных картах
+        k = 0
+        faces = []
+        for card in cards:
+            if is_court(card):
+                faces.append(render_card_vintage(card, None))
+            else:
+                faces.append(render_card_vintage(card, photos[k % len(photos)]))
+                k += 1
     else:
         faces = [render_card(card, photos[i % len(photos)]) for i, card in enumerate(cards)]
 

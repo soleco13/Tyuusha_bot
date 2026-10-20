@@ -44,7 +44,11 @@ let DEFAULT_BACK = "hearts";
 const backTitle = (key) => ([...BACKS, ...UNO_BACKS].find((b) => b.key === key) || BACKS[0]).title;
 
 // Оформление лицевой стороны: классическое или фото на всю карту с маленьким ч/б индексом
-let STYLES = [{ key: "classic", title: "Классическая" }, { key: "full", title: "Фото на всю карту" }];
+let STYLES = [{ key: "classic", title: "Классическая" }, { key: "full", title: "Фото на всю карту" }, { key: "vintage", title: "Старинная" }];
+// «Старинная»: у В, Д, К — фигуры из открытой колоды (img/vintage), у остальных карт — фото в рамке
+const COURT = { "В": "J", "Д": "Q", "К": "K" };
+const SUIT_KEYS = ["spades", "hearts", "diamonds", "clubs"];
+const isCourt = (c) => c.rank in COURT && c.suit != null;
 let DEFAULT_STYLE = "classic";
 const styleTitle = (key) => (STYLES.find((s) => s.key === key) || STYLES[0]).title;
 
@@ -140,8 +144,16 @@ function photoStyle(ph) {
 // ---------- игральная карта ----------
 
 // Карта как в печати: крупный засечный ранг, рядом большая масть, под рангом маленькая; фото с мягкими краями
-function playingCard({ rank, suit, ph, zoom = 1, x = 50, y = 50, cls = "", style = "", full = false, ink = "black" }) {
+function playingCard({ rank, suit, ph, zoom = 1, x = 50, y = 50, cls = "", style = "", full = false, ink = "black", vintage = false }) {
   const joker = rank === "JOKER";
+  if (vintage) {
+    const [glyph, color] = joker ? ["★\uFE0E", "joker"] : SUITS[suit];
+    const r = joker ? "J" : rank;
+    const art = !joker && rank in COURT ? `background:url('img/vintage/${SUIT_KEYS[suit]}_${COURT[rank]}.jpg') center / cover no-repeat`
+      : ph ? `background:url('${ph.url}') 50% 42% / cover no-repeat, ${ph.bg || "#e8ecf4"}` : "background:var(--surface-2)";
+    const ix = (side) => `<div class="vix ${side} ${r.length > 1 ? "two" : ""}"><span>${r}</span><b>${glyph}</b></div>`;
+    return `<div class="pc vin ${color} ${cls}" style="${style}"><div class="vf" style="${art}"></div>${ix("")}${ix("r")}</div>`;
+  }
   if (full) {
     const glyph = joker ? "★\uFE0E" : SUITS[suit][0];
     const bg = ph ? `background:url('${ph.url}') 50% 45% / cover no-repeat, ${ph.bg || "#e8ecf4"}` : "background:var(--surface-2)";
@@ -363,6 +375,13 @@ function deckLayout(dk) {
   const ranks = p.id === "deck54" ? RANKS54 : RANKS36;
   SUITS.forEach((_, s) => ranks.forEach((r) => cards.push({ rank: r, suit: s })));
   if (p.id === "deck54") cards.push({ rank: "JOKER" }, { rank: "JOKER" });
+  if (dk.style === "vintage") {  // как на сервере: фигуры со своим рисунком, фото по очереди на остальных
+    let k = 0;
+    return cards.map((c, i) => {
+      const photoIndex = isCourt(c) || !dk.photos.length ? null : k++ % dk.photos.length;
+      return { ...c, i, o: {}, vintage: true, ph: photoIndex == null ? null : dk.photos[photoIndex], photoIndex };
+    });
+  }
   if (dk.style === "full" && dk.photos.length) {
     const lums = dk.photos.map((ph) => ph.lum ?? 0.5);
     const order = assignByLight(cards, lums);
@@ -674,12 +693,15 @@ SCREENS.deck = () => {
     ${uno ? "" : `<div class="h-section"><h2>Оформление</h2></div>
     <div class="styles" role="radiogroup" aria-label="Оформление карт">${STYLES.map((st) => `<button class="style-opt ${st.key === dk.style ? "on" : ""}" role="radio"
       aria-checked="${st.key === dk.style}" data-act="set" data-model="deck.style" data-value="${st.key}">
-      <span class="style-cards">${st.key === "full"
+      <span class="style-cards">${st.key === "vintage"
+        ? playingCard({ rank: "К", suit: 3, vintage: true }) + playingCard({ rank: "7", suit: 1, ph: dk.photos[0], vintage: true })
+        : st.key === "full"
         ? playingCard({ rank: "8", suit: 0, ph: dk.photos[0], full: true, ink: "black" }) + playingCard({ rank: "6", suit: 1, ph: dk.photos[1] || dk.photos[0], full: true, ink: "white", style: "background:#24262c" })
         : playingCard({ rank: "В", suit: 1, ph: dk.photos[0] }) + playingCard({ rank: "7", suit: 3, ph: dk.photos[1] || dk.photos[0] })}</span>
       <span class="t">${esc(st.title)}</span>
-      <span class="s">${st.key === "full" ? "Фото до краёв, маленький ч/б знак в углу" : "Фото в центре, ранг и масть в углах"}</span></button>`).join("")}</div>
-    ${dk.style === "full" ? `<div class="small muted">Чёрные масти Тюша ставит на светлые фото, белые — на тёмные, чтобы знак всегда читался.</div>` : ""}`}
+      <span class="s">${st.key === "vintage" ? "Как типографская колода: фигуры В, Д, К и фото в рамке" : st.key === "full" ? "Фото до краёв, маленький ч/б знак в углу" : "Фото в центре, ранг и масть в углах"}</span></button>`).join("")}</div>
+    ${dk.style === "full" ? `<div class="small muted">Чёрные масти Тюша ставит на светлые фото, белые — на тёмные, чтобы знак всегда читался.</div>` : ""}
+    ${dk.style === "vintage" ? `<div class="small muted">На вальтах, дамах и королях — классические фигуры, ваши фото — на остальных картах и джокерах.</div>` : ""}`}
     ${uno ? unoDesigner(dk) : ""}
     <div class="h-section"><h2>Рубашка <span class="muted" style="font-weight:500">· ${esc(backTitle(dk.back))}</span></h2></div>
     <div class="backs" role="radiogroup" aria-label="Рубашка карт">${backs.map((b) => `<button class="back-opt ${b.key === dk.back ? "on" : ""}" role="radio"
@@ -687,7 +709,7 @@ SCREENS.deck = () => {
     ${uno ? unoBackEditor(dk) : ""}
     <div class="h-section"><h2>Макет · ${layout.length} ${plural(layout.length, "карта", "карты", "карт")}</h2></div>
     <div class="deck">${layout.map((c) =>
-      `<div style="display:block;animation:deal .5s var(--spring) both;animation-delay:${Math.min(c.i * 12, 400)}ms">${c.uno ? unoCard({ ...c, style: "position:relative;aspect-ratio:63/88" }) : playingCard({ rank: c.rank, suit: c.suit, ph: c.ph, full: c.full, ink: c.ink, style: "position:relative;aspect-ratio:63/88" })}</div>`).join("")}</div>`,
+      `<div style="display:block;animation:deal .5s var(--spring) both;animation-delay:${Math.min(c.i * 12, 400)}ms">${c.uno ? unoCard({ ...c, style: "position:relative;aspect-ratio:63/88" }) : playingCard({ rank: c.rank, suit: c.suit, ph: c.ph, full: c.full, ink: c.ink, vintage: c.vintage, style: "position:relative;aspect-ratio:63/88" })}</div>`).join("")}</div>`,
     dock: dockBar(quoteDeck(dk).total, "Проверить макет", "review-deck", { disabled: !dk.photos.length }),
   };
 };
@@ -714,7 +736,7 @@ function reviewData() {
         ? `<div style="width:28%">${unoCard({ ...c, style: "position:relative;aspect-ratio:63/88" })}</div>`
         : c.memo
         ? `<div class="pc memo" style="width:30%;position:relative"><div class="win" style="${photoStyle(c.ph)};inset:8%"></div></div>`
-        : `<div style="width:28%">${playingCard({ rank: c.rank, suit: c.suit, ph: c.ph, full: c.full, ink: c.ink, zoom: c.o.zoom || 1, x: c.o.x ?? 50, y: c.o.y ?? 50, style: "position:relative;aspect-ratio:63/88" })}</div>`).join("")}</div>` };
+        : `<div style="width:28%">${playingCard({ rank: c.rank, suit: c.suit, ph: c.ph, full: c.full, ink: c.ink, vintage: c.vintage, zoom: c.o.zoom || 1, x: c.o.x ?? 50, y: c.o.y ?? 50, style: "position:relative;aspect-ratio:63/88" })}</div>`).join("")}</div>` };
   }
   if (r.kind === "doc") {
     const d = state.docJob, p = byId("doc"), q = quoteDoc(d);

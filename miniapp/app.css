@@ -658,7 +658,7 @@ input[type="range"] { width: 100%; accent-color: var(--blue); }
 .pc.full.ink-white { color: #fff; }
 
 /* выбор оформления в конструкторе */
-.styles { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.styles { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
 .style-opt { display: flex; flex-direction: column; gap: 4px; padding: 12px; border-radius: 18px; background: var(--surface);
   box-shadow: var(--card-shadow); text-align: left; transition: box-shadow .2s, transform .3s var(--spring); min-width: 0; }
 .style-opt.on { box-shadow: 0 0 0 2.5px var(--blue), var(--card-shadow); }
@@ -730,3 +730,15 @@ input[type="range"] { width: 100%; accent-color: var(--blue); }
 .ub-fields { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
 .ub-fields .field { display: flex; flex-direction: column; gap: 6px; }
 .ub-fields .lbl { display: flex; justify-content: space-between; font-size: 13px; font-weight: 600; }
+
+/* «Старинная»: кремовая бумага, рамка 36 мм по центру, крупный засечный индекс */
+.pc.vin { background: #FDFCEE; }
+.pc.vin .vf { position: absolute; left: 21.4%; right: 21.4%; top: 15.97%; bottom: 15.97%; outline: .48cqw solid #141414; }
+.pc.vin .vix { position: absolute; left: 3.5%; top: 2.95%; width: 17.5cqw; display: flex; flex-direction: column; align-items: center; line-height: 1; }
+.pc.vin .vix.r { left: auto; top: auto; right: 3.5%; bottom: 2.95%; transform: rotate(180deg); }
+.pc.vin .vix span { font: 700 14.9cqw/.9 "PT Serif", Georgia, serif; }
+.pc.vin .vix.two span { font-size: 11.7cqw; letter-spacing: -.04em; }
+.pc.vin .vix b { font: 400 10.5cqw/1 "Segoe UI Symbol", "Apple Symbols", "Noto Sans Symbols 2", sans-serif; margin-top: 1.2cqw; }
+.pc.vin.red { color: #CE1C2E; }
+.pc.vin.joker { color: #B01E78; }
+.style-opt .style-cards .pc { width: 52px; }

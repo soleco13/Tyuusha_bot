@@ -1,0 +1,11 @@
+Фигуры валетов, дам и королей для оформления «Старинная» (cards.py, render_card_vintage).
+
+Источник: https://github.com/saulspatz/SVGCards — Decks/Vertical2/svgs/<масть><Jack|Queen|King>.svg
+Лицензия: автор колоды (Saul Spatz) передал всё содержимое репозитория в общественное достояние
+(public domain), разрешено коммерческое использование без разрешения и указания авторства.
+Рисунки фигур автор колоды взял из набора Byron Knoll на Wikimedia Commons
+(https://commons.wikimedia.org/wiki/Category:Playing_cards_set_by_Byron_Knoll), тоже в общественном достоянии.
+
+Как получены файлы: SVG растеризованы (resvg) так, чтобы внутренность центральной рамки карты
+(координаты 56..154 × 76..239 в системе 210×315) имела ширину 36 мм при 300 DPI — 425×707 px;
+файлы <suit>_<J|Q|K>.png. Уменьшенные копии для Mini App — miniapp/img/vintage/*.jpg.
