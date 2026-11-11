@@ -692,6 +692,36 @@ BACKS = {  # ключ: (название для клиента, функция)
     "sparkle": ("Красная искра", back_sparkle),
 }
 DEFAULT_BACK = "hearts"
+BACK_GROUPS = {k: "Узоры" for k in BACKS}  # группа рубашки для фильтра в Mini App
+
+# Картинки-рубашки: готовые JPEG 63×88 мм при 300 DPI в assets/backs, список — в manifest.json
+PHOTO_BACKS_DIR = Path(__file__).resolve().parent / "assets" / "backs"
+
+
+def _photo_back(key: str):
+    def render() -> Image.Image:
+        img = Image.open(PHOTO_BACKS_DIR / f"{key}.jpg").convert("RGB")
+        return img if img.size == (CARD_W, CARD_H) else img.resize((CARD_W, CARD_H), Image.LANCZOS)
+    return render
+
+
+def _load_photo_backs() -> None:
+    manifest = PHOTO_BACKS_DIR / "manifest.json"
+    if not manifest.exists():
+        return
+    import json
+    for item in json.loads(manifest.read_text("utf-8")):
+        if (PHOTO_BACKS_DIR / f"{item['key']}.jpg").exists() and item["key"] not in BACKS:
+            BACKS[item["key"]] = (item["title"], _photo_back(item["key"]))
+            BACK_GROUPS[item["key"]] = item.get("group") or "Картинки"
+
+
+_load_photo_backs()
+
+
+def back_preview(key: str) -> str:
+    """Имя файла превью в miniapp/img/backs: у картинок — JPEG, у нарисованных — PNG."""
+    return f"{key}.jpg" if (PHOTO_BACKS_DIR / f"{key}.jpg").exists() else f"{key}.png"
 
 
 def backs_for(deck_key: str) -> dict:
@@ -736,8 +766,11 @@ def save_back_previews(folder: Path, width: int = 240) -> list[Path]:
     for key in [*BACKS, *uno.BACKS]:
         img = render_back(key)
         img = img.resize((width, round(width * CARD_H / CARD_W)), Image.LANCZOS)
-        path = folder / f"{key}.png"
-        img.save(path, optimize=True)
+        path = folder / back_preview(key)
+        if path.suffix == ".jpg":   # картинки — в JPEG, иначе превью весят в разы больше
+            img.save(path, quality=84, optimize=True)
+        else:
+            img.save(path, optimize=True)
         out.append(path)
     return out
 

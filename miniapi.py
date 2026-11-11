@@ -122,7 +122,8 @@ async def get_config(request: web.Request) -> web.Response:
     _user(request)
     return web.json_response({"ok": True, "prices": pricing.get_prices(), "max_photos": MAX_PHOTOS,
                               "max_photo_job": MAX_PHOTO_JOB, "default_back": cards.DEFAULT_BACK,
-                              "backs": [{"key": k, "title": t} for k, (t, _) in cards.BACKS.items()],
+                              "backs": [{"key": k, "title": t, "group": cards.BACK_GROUPS.get(k, "Узоры"),
+                                         "img": cards.back_preview(k)} for k, (t, _) in cards.BACKS.items()],
                               "uno_backs": [{"key": k, "title": t} for k, (t, _) in cards.backs_for("uno").items()],
                               "uno_default_back": cards.default_back("uno"),
                               "uno": _uno_config(),

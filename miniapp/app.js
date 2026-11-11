@@ -15,10 +15,10 @@ const IMG = {
 
 const PRODUCTS = [
   { id: "deck36", cat: "cards", title: "Классическая колода", sub: "36 карт, от шестёрки до туза", price: 990, cards: 36, art: "classic",
-    includes: [["cards", "36 карт 63×88 мм"], ["heart", "Рубашка на выбор: 20 вариантов"], ["stars", "Ваши фото на каждой карте"]],
+    includes: [["cards", "36 карт 63×88 мм"], ["heart", "Рубашка на выбор: 60 вариантов"], ["stars", "Ваши фото на каждой карте"]],
     reqs: ["От 1 до 36 фото: фото распределятся по картам по очереди", "Лучше от 1000 px по короткой стороне", "JPG или PNG до 20 МБ"] },
   { id: "deck54", cat: "cards", title: "Полная колода", sub: "54 карты с двумя джокерами", price: 1290, cards: 54, art: "full",
-    includes: [["cards", "54 карты 63×88 мм"], ["stars", "Два джокера с вашими фото"], ["heart", "Рубашка на выбор: 20 вариантов"]],
+    includes: [["cards", "54 карты 63×88 мм"], ["stars", "Два джокера с вашими фото"], ["heart", "Рубашка на выбор: 60 вариантов"]],
     reqs: ["От 1 до 54 фото", "Лучше от 1000 px по короткой стороне", "JPG или PNG до 20 МБ"] },
   { id: "uno", cat: "cards", title: "UNO с вашими фото", sub: "108 карт, фото в овале карт с цифрами", price: 1790, cards: 108, maxPhotos: 76, art: "uno",
     includes: [["cards", "108 карт 63×88 мм, полный набор для игры"], ["stars", "Ваши фото на 76 картах с цифрами"], ["heart", "6 рубашек на выбор"]],
@@ -44,6 +44,8 @@ let PRICES = {
 let BACKS = [{ key: "hearts", title: "Сердечки" }, { key: "plaid", title: "Шотландка" }, { key: "night", title: "Звёздная ночь" },
   { key: "dots", title: "Мятный горошек" }, { key: "flowers", title: "Ромашки" }];
 let DEFAULT_BACK = "hearts";
+// группы рубашек для фильтра: в порядке появления в списке с сервера
+const backGroups = () => [...new Set(BACKS.map((b) => b.group).filter(Boolean))];
 const backTitle = (key) => ([...BACKS, ...UNO_BACKS].find((b) => b.key === key) || BACKS[0]).title;
 
 // Оформление лицевой стороны: классическое или фото на всю карту с маленьким ч/б индексом
@@ -341,7 +343,8 @@ function unoBackEditor(dk) {
     <div class="small muted">Надпись можно не писать. Буквы, цифры и простые знаки; размер подстроится сам, чтобы всё влезло. Фото встанет в овал рубашки.</div>`;
 }
 
-const cardBack = (key = DEFAULT_BACK, style = "") => `<div class="pc back" style="background-image:url('img/backs/${key}.png');${style}"></div>`;
+const backImg = (key) => (BACKS.find((b) => b.key === key) || {}).img || `${key}.png`;
+const cardBack = (key = DEFAULT_BACK, style = "") => `<div class="pc back" style="background-image:url('img/backs/${backImg(key)}');${style}"></div>`;
 
 function productArt(p, big = false) {
   const s = SAMPLE_PHOTOS;
@@ -1088,7 +1091,9 @@ SCREENS.deck = () => {
     ${dk.style === "vintage" ? `<div class="small muted">На вальтах, дамах и королях — классические фигуры, ваши фото — на остальных картах и джокерах.</div>` : ""}`}
     ${uno ? unoDesigner(dk) : ""}
     <div class="h-section"><h2>Рубашка <span class="muted" style="font-weight:500">· ${esc(backTitle(dk.back))}</span></h2></div>
-    <div class="backs" role="radiogroup" aria-label="Рубашка карт">${backs.map((b) => `<button class="back-opt ${b.key === dk.back ? "on" : ""}" role="radio"
+    ${!uno && backGroups().length > 1 ? `<div class="chips back-groups">${["Все", ...backGroups()].map((g) => `<button class="chip ${(state.backGroup || "Все") === g ? "on" : ""}"
+      data-act="set" data-model="backGroup" data-value="${esc(g)}">${esc(g)}</button>`).join("")}</div>` : ""}
+    <div class="backs" role="radiogroup" aria-label="Рубашка карт">${(uno ? backs : backs.filter((b) => !state.backGroup || state.backGroup === "Все" || b.group === state.backGroup)).map((b) => `<button class="back-opt ${b.key === dk.back ? "on" : ""}" role="radio"
       aria-checked="${b.key === dk.back}" data-act="set" data-model="deck.back" data-value="${b.key}">${uno ? unoBack({ ...dk, back: b.key }) : cardBack(b.key)}<span>${esc(b.title)}</span></button>`).join("")}</div>
     ${uno ? unoBackEditor(dk) : ""}
     <div class="h-section"><h2>Макет · ${layout.length} ${plural(layout.length, "карта", "карты", "карт")}</h2></div>

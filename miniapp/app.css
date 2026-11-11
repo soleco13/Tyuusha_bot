@@ -827,3 +827,7 @@ textarea.input { resize: vertical; min-height: 92px; line-height: 1.45; padding-
 .pc.game i { display: block; height: 42%; border-radius: 3cqw; }
 .pc.game span { height: 5cqw; border-radius: 3cqw; background: rgba(255, 255, 255, .85); }
 .pc.game span:last-child { width: 70%; }
+
+/* фильтр рубашек по группам */
+.back-groups { display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none; margin-bottom: 10px; flex-wrap: nowrap; }
+.back-groups .chip { flex: none; }
