@@ -68,6 +68,8 @@ def _user(request: web.Request) -> dict:
     if not user:
         raise web.HTTPUnauthorized(text=json.dumps({"ok": False, "error": "Откройте приложение из Telegram заново"}),
                                    content_type="application/json")
+    name = " ".join(x for x in (user.get("first_name"), user.get("last_name")) if x) or None
+    db.touch_user(user["id"], name, user.get("username"))
     return user
 
 

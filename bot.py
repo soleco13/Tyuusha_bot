@@ -17,6 +17,7 @@ from aiogram.types import (BotCommand, BotCommandScopeChat, CallbackQuery, MenuB
 
 import admin_web
 import config
+import db
 import printing
 import service
 import tg
@@ -44,6 +45,15 @@ async def lock(cb: CallbackQuery, chosen: str) -> None:
             await msg.edit_reply_markup(reply_markup=None)
     except Exception:
         pass
+
+
+@dp.update.outer_middleware()
+async def remember_user(handler, event, data):
+    """Каждый, кто пишет боту, попадает в список для рассылок."""
+    user = data.get("event_from_user")
+    if user and not user.is_bot:
+        db.touch_user(user.id, user.full_name, user.username)
+    return await handler(event, data)
 
 
 # ---------- клиент: всё в Mini App ----------

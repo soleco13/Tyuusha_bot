@@ -354,3 +354,44 @@ def take_print_job(agent_id: int) -> dict | None:
         if not row:
             return None
         return update_print_job(row[0], state="sent", detail="Компьютер получил задание")
+
+
+# ---------- клиенты бота: для рассылок ----------
+
+_conn.executescript("""
+CREATE TABLE IF NOT EXISTS users (
+    id INTEGER PRIMARY KEY,                   -- Telegram ID
+    name TEXT,
+    username TEXT,
+    first_seen TEXT NOT NULL,
+    last_seen TEXT NOT NULL,
+    blocked INTEGER NOT NULL DEFAULT 0        -- 1 — бот заблокирован, рассылки не шлём
+);
+""")
+with _lock:  # клиенты, которые заказывали до появления таблицы
+    _conn.execute("INSERT OR IGNORE INTO users (id, name, username, first_seen, last_seen) "
+                  "SELECT user_id, user_name, username, MIN(created_at), MAX(created_at) FROM orders GROUP BY user_id")
+
+_seen: dict[int, float] = {}
+
+
+def touch_user(user_id: int, name: str | None, username: str | None) -> None:
+    """Запоминает клиента (не чаще раза в 10 минут на человека). Написал боту — значит, снова не заблокирован."""
+    t = time.time()
+    if t - _seen.get(user_id, 0) < 600:
+        return
+    _seen[user_id] = t
+    with _lock:
+        _conn.execute("INSERT INTO users (id, name, username, first_seen, last_seen) VALUES (?, ?, ?, ?, ?) "
+                      "ON CONFLICT(id) DO UPDATE SET name=excluded.name, username=excluded.username, "
+                      "last_seen=excluded.last_seen, blocked=0", (user_id, name, username, now(), now()))
+
+
+def broadcast_users() -> list[int]:
+    with _lock:
+        return [r[0] for r in _conn.execute("SELECT id FROM users WHERE blocked=0 ORDER BY id")]
+
+
+def set_user_blocked(user_id: int) -> None:
+    with _lock:
+        _conn.execute("UPDATE users SET blocked=1 WHERE id=?", (user_id,))
